@@ -41,13 +41,24 @@ install() {
     fi
     echo "== $NAME: installing for user '$RUN_USER' in $DIR"
 
-    # Python environment, as the user (not root)
+    # Python environment, as the user (not root). The venv carries its own pip, so no
+    # system-wide pip is needed -- only Debian's venv module to create it the first time.
     if [ ! -x "$DIR/.venv/bin/python" ]; then
+        if ! python3 -c "import ensurepip, venv" 2>/dev/null; then
+            echo "-- installing python3-venv"
+            apt-get install -y -qq python3-venv >/dev/null
+        fi
         echo "-- creating .venv"
         sudo -u "$RUN_USER" python3 -m venv "$DIR/.venv"
     fi
-    echo "-- installing Python requirements"
-    sudo -u "$RUN_USER" "$DIR/.venv/bin/pip" install -q -r "$DIR/requirements.txt"
+    echo "-- installing Python requirements into .venv (with the venv's own pip)"
+    sudo -u "$RUN_USER" "$DIR/.venv/bin/python" -m pip install -q -r "$DIR/requirements.txt"
+
+    # ffmpeg: reads the mp3 recordings some voices use (Raspberry Pi OS Lite lacks it)
+    if ! command -v ffmpeg >/dev/null; then
+        echo "-- installing ffmpeg"
+        apt-get install -y -qq ffmpeg >/dev/null || echo "   (couldn't install ffmpeg: no network?)"
+    fi
 
     # permissions: Bluetooth (phone app), audio (USB speaker), serial (OBD adapter)
     for g in bluetooth audio dialout; do

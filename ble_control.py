@@ -13,7 +13,8 @@ scans for the service, connects and talks over three characteristics:
              status                send the status now
   STATUS   read + notify, JSON, about once a second:
              {"v": voice, "vol": volume, "kmh": speed, "info": engine line,
-              "car": data fresh?, "fx": .., "ss": .., "vg": .., "cq": .., "ih": ..}
+              "car": data fresh?, "fx": .., "ss": .., "vg": .., "cq": .., "ih": ..,
+              "msg": last problem, e.g. a voice that failed to load ("" when all is well)}
   LIST     notify: the voice list, as above
 
 Every change is saved (settings.json), so the car starts the next drive the same way.
@@ -126,6 +127,8 @@ class ControlServer:
             reply = f"error: {e}"
         if reply:
             self.log(f"phone: {text!r} -> {reply}")
+            if reply != "ok":
+                self.engine.message = reply      # shown in the app
         if text == "voices":
             self.loop.create_task(self._send_list())
         else:
@@ -183,5 +186,6 @@ class ControlServer:
         info = (e.info or "").strip()
         st = {"v": s.voice, "vol": round(s.volume, 2), "kmh": round(e.speed, 1),
               "info": info[:60], "car": bool(e.fresh), "fx": s.effects, "ss": s.small_speaker,
-              "vg": s.virtual_gears, "cq": s.cruise_quiet, "ih": round(s.idle_hum, 2)}
+              "vg": s.virtual_gears, "cq": s.cruise_quiet, "ih": round(s.idle_hum, 2),
+              "msg": (getattr(e, "message", "") or "")[:120]}
         return json.dumps(st, separators=(",", ":")).encode("utf-8")

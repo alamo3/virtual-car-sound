@@ -31,7 +31,43 @@ import numpy as np
 MAPS_DIR = Path(__file__).parent / "maps"
 
 
+def _load_wav(path, sr):
+    """Plain PCM WAV without ffmpeg: mono mix, then band-limited (FFT) resampling."""
+    import wave
+    with wave.open(str(path)) as w:
+        ch, width, rate = w.getnchannels(), w.getsampwidth(), w.getframerate()
+        raw = w.readframes(w.getnframes())
+    if width == 3:
+        b = np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(np.int32)
+        x = (b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16))
+        x = np.where(x >= 1 << 23, x - (1 << 24), x) / float(1 << 23)
+    elif width in (1, 2, 4):
+        x = np.frombuffer(raw, {1: np.uint8, 2: "<i2", 4: "<i4"}[width]).astype(np.float64)
+        x = (x - 128.0) / 128.0 if width == 1 else x / float(1 << (8 * width - 1))
+    else:
+        raise ValueError(f"unsupported WAV sample width {width}")
+    x = x.reshape(-1, ch).sum(axis=1) / np.sqrt(ch)     # same mono mix as ffmpeg -ac 1
+    if rate != sr and len(x):
+        n2 = int(round(len(x) * sr / rate))
+        X = np.fft.rfft(x)
+        Y = np.zeros(n2 // 2 + 1, dtype=complex)
+        k = min(len(X), len(Y))
+        Y[:k] = X[:k]
+        x = np.fft.irfft(Y, n2) * (n2 / len(x))
+    return x
+
+
 def load(path, sr):
+    """Any audio file as mono float64 at `sr`. WAV files are read directly (no ffmpeg
+    needed -- Raspberry Pi OS Lite doesn't ship it); other formats go through ffmpeg."""
+    if str(path).lower().endswith(".wav"):
+        try:
+            return _load_wav(path, sr)
+        except Exception:
+            pass                       # e.g. float or extensible WAV: let ffmpeg read it
+    import shutil
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError(f"ffmpeg is needed to read {Path(path).name}: sudo apt install ffmpeg")
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(sr),
                           "-f", "f32le", "-"], capture_output=True, check=True).stdout
     return np.frombuffer(raw, "<f4").astype(np.float64)

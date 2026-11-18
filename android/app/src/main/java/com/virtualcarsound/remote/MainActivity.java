@@ -407,6 +407,9 @@ public class MainActivity extends Activity {
         updatingUi = true;
         try {
             currentVoice = j.optString("v");
+            String msg = j.optString("msg");      // e.g. a voice the Pi couldn't load
+            link.setText(msg.isEmpty() ? "Connected" : msg);
+            link.setTextColor(Color.parseColor(msg.isEmpty() ? "#9aa0a6" : "#f28b82"));
             speed.setText(String.format(java.util.Locale.US, "%.0f km/h", j.optDouble("kmh", 0)));
             String line = j.optString("info");
             info.setText((j.optBoolean("car", true) ? "" : "no car data   ") + line);

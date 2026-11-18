@@ -763,6 +763,7 @@ class Engine:
         self.fresh = True
         self.flags = []
         self.info = ""
+        self.message = ""                # last problem worth showing the phone ("" = none)
         self.mute_power_on_until = 0.0   # an early chime was already played (headless boot)
         self._applied = None
         self._last = None
@@ -782,6 +783,7 @@ class Engine:
                 self.built[name] = VOICES[name]()
             except Exception as e:         # missing file, bad preset...: keep playing
                 self.log(f"voice {name!r} failed to build: {e!r}")
+                self.message = f"Couldn't load {name}: {e}"
                 if self.current is not None:
                     self.settings.voice = self.current.name      # stay on what works
                     return
@@ -791,6 +793,7 @@ class Engine:
                 return self.select_voice(fallback)
             self.built[name].set_small_speaker(self.settings.small_speaker)
             self.log(f"voice: {name} (built in {time.monotonic() - t:.1f} s)")
+        self.message = ""
         if self.current is not None:
             self.current.output.stop()
         self.current = self.built[name]
