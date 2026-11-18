@@ -12,13 +12,15 @@
 #   - switches Bluetooth on at boot
 #   - writes /etc/default/virtual-car-sound with the start options (edit to change them)
 #   - writes /etc/systemd/system/virtual-car-sound.service, enables and starts it
-# The service runs as the user who ran sudo, restarts itself if it ever exits, and logs
-# to the system journal. The phone app's settings are kept in ~/.config/virtual-car-sound/.
+# The service runs as the user who ran sudo and logs to the system journal. It restarts
+# whenever it exits or hangs (systemd watchdog), with no limit on restarts, and the Pi's
+# hardware watchdog reboots the board if the whole system ever freezes. The phone app's settings are kept in ~/.config/virtual-car-sound/.
 set -euo pipefail
 
 NAME=virtual-car-sound
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=/etc/systemd/system/$NAME.service
+HW_WATCHDOG=/etc/systemd/system.conf.d/90-$NAME-watchdog.conf
 DEFAULTS=/etc/default/$NAME
 RUN_USER="${SUDO_USER:-$(id -un)}"
 # start options: headless (no window), read the car over OBD, accept the phone app
@@ -73,9 +75,17 @@ EOF
 Description=Virtual car sound engine
 After=bluetooth.target sound.target
 Wants=bluetooth.target
+# never give up: keep restarting however often it fails (default: stop after 5 in 10 s)
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+# the program tells systemd when it is ready and pings it every 2 s while running;
+# if the pings stop (a hang), systemd kills and restarts it
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
+TimeoutStartSec=180
+TimeoutStopSec=10
 User=$RUN_USER
 SupplementaryGroups=bluetooth audio dialout
 WorkingDirectory=$DIR
@@ -84,13 +94,25 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=$DIR/.venv/bin/python $DIR/main.py \$VCS_ARGS
 Restart=always
 RestartSec=3
-# audio first: a little more CPU priority than ordinary background jobs
+# audio first: a little more CPU priority than ordinary background jobs, and the last
+# thing the kernel kills if memory runs out
 Nice=-5
+OOMScoreAdjust=-500
 
 [Install]
 WantedBy=multi-user.target
 EOF
     echo "-- wrote $UNIT"
+
+    # hardware watchdog (Raspberry Pi has one): if the whole system freezes, the board
+    # reboots itself and the service starts again
+    if [ -e /dev/watchdog ]; then
+        mkdir -p "$(dirname "$HW_WATCHDOG")"
+        printf '%s\n' "# written by $NAME's install_service.sh: reboot if the system hangs" \
+            "[Manager]" "RuntimeWatchdogSec=15" "RebootWatchdogSec=2min" > "$HW_WATCHDOG"
+        systemctl daemon-reexec
+        echo "-- hardware watchdog on (reboots the Pi if it ever freezes)"
+    fi
 
     systemctl daemon-reload
     systemctl enable "$NAME" >/dev/null
@@ -108,6 +130,7 @@ uninstall() {
     need_root uninstall
     systemctl disable --now "$NAME" 2>/dev/null || true
     rm -f "$UNIT"
+    if [ -f "$HW_WATCHDOG" ]; then rm -f "$HW_WATCHDOG"; systemctl daemon-reexec; fi
     systemctl daemon-reload
     echo "Removed the $NAME service (kept $DEFAULTS and the project files)."
 }

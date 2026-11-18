@@ -1,5 +1,7 @@
 import json
+import os
 import time
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -114,6 +116,9 @@ MUTE_BELOW_RPM = 30.0    # below this (and no pedal) the car counts as standing 
 # Standstill: instead of cutting off the moment the car stops, the voice keeps idling for
 # STANDSTILL_HOLD_SEC, then fades over STANDSTILL_FADE_SEC to the idle-hum level (0 =
 # silence, the default). Moving or touching the pedal brings it back in START_FADE_SEC.
+AUDIO_CHECK_SEC = 5.0     # headless: how often to check the speaker is still there
+TICK_ERRORS_SWITCH_VOICE = 50    # ~1 s of failing ticks: fall back to the default voice
+TICK_ERRORS_RESTART = 500        # ~10 s: give up and let systemd restart the program
 STANDSTILL_HOLD_SEC = 3.0
 STANDSTILL_FADE_SEC = 2.5
 START_FADE_SEC = 0.15
@@ -606,6 +611,16 @@ class CarLink:
                 pass
 
     def _run(self):
+        while not self._stop.is_set():
+            try:
+                self._run_once()
+            except Exception as e:          # a bug here must not end reconnecting for good
+                self.log(f"car: link thread error {e!r}; restarting the link")
+                self._drop()
+                self._stop.wait(self.RETRY_SEC)
+        self._drop()
+
+    def _run_once(self):
         last_err = None
         while not self._stop.is_set():
             if self.reader is None:
@@ -631,7 +646,6 @@ class CarLink:
                     self._drop()
                     continue
             self._stop.wait(0.25)
-        self._drop()
 
     def stop(self):
         self._stop.set()
@@ -678,11 +692,30 @@ SAVED_FIELDS = ("voice", "volume", "effects", "small_speaker", "virtual_gears", 
                 "idle_hum")
 
 
+def sd_notify(message: str):
+    """Tell systemd how we are (READY=1, WATCHDOG=1, STATUS=...). No-op outside systemd."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    import socket
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            s.sendall(message.encode())
+    except OSError:
+        pass
+
+
 def save_settings(settings, path=None):
     path = Path(path or SETTINGS_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({k: getattr(settings, k) for k in SAVED_FIELDS}, indent=1))
+    with open(tmp, "w") as f:
+        f.write(json.dumps({k: getattr(settings, k) for k in SAVED_FIELDS}, indent=1))
+        f.flush()
+        os.fsync(f.fileno())               # on the card before the swap (power cuts)
     tmp.replace(path)                      # atomic: a power cut never leaves half a file
 
 
@@ -745,7 +778,17 @@ class Engine:
             return
         if name not in self.built:
             t = time.monotonic()
-            self.built[name] = VOICES[name]()
+            try:
+                self.built[name] = VOICES[name]()
+            except Exception as e:         # missing file, bad preset...: keep playing
+                self.log(f"voice {name!r} failed to build: {e!r}")
+                if self.current is not None:
+                    self.settings.voice = self.current.name      # stay on what works
+                    return
+                fallback = DEFAULT_VOICE if name != DEFAULT_VOICE else next(
+                    n for n in VOICES if n != name)
+                self.settings.voice = fallback
+                return self.select_voice(fallback)
             self.built[name].set_small_speaker(self.settings.small_speaker)
             self.log(f"voice: {name} (built in {time.monotonic() - t:.1f} s)")
         if self.current is not None:
@@ -1013,16 +1056,56 @@ def run_headless(args, settings, link):
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
 
+    # audio device watchdog: the program can't move a running graph to another device,
+    # so if the speaker in use disappears -- or a USB speaker appears while we are on the
+    # fallback -- it exits and systemd (Restart=always) starts it again on the right one
+    using = graph.output_device_name or ""
+    on_fallback = args.output_device is None and "usb" not in using.lower()
+    if on_fallback:
+        log("no USB speaker found: using the default output until one is plugged in")
+
+    def audio_device_problem():
+        names = AudioGraph.get_output_device_names()
+        if using and using not in names:
+            return f"audio device {using!r} disappeared"
+        if on_fallback and any("usb" in n.lower() for n in names):
+            return "a USB speaker was plugged in"
+        return None
+
     log(f"running: voice {settings.voice!r}, "
         f"{'car' if link else 'demo drive'}; Ctrl+C / SIGTERM to stop")
     period, next_t, last_log, worst_cpu = 0.02, time.monotonic(), 0.0, 0.0
+    last_check, restart_reason = time.monotonic(), None
+    errors, last_ping = 0, 0.0
+    sd_notify("READY=1")
+    sd_notify(f"STATUS=playing {settings.voice}")
     try:
         while not stop.is_set():
             now = time.monotonic()
             if args.demo:
                 engine.pedal_position = demo_pedal(now - t0) * MAX_PEDAL
-            engine.tick(now)
+            try:
+                engine.tick(now)
+                errors = 0
+            except Exception as e:      # one bad tick must not take the sound down
+                errors += 1
+                if errors == 1 or errors % 250 == 0:
+                    log(f"engine error ({errors} in a row): {e!r}\n{traceback.format_exc()}")
+                if errors == TICK_ERRORS_SWITCH_VOICE and settings.voice != DEFAULT_VOICE:
+                    log(f"voice {settings.voice!r} keeps failing: switching to {DEFAULT_VOICE!r}")
+                    settings.voice = DEFAULT_VOICE
+                if errors >= TICK_ERRORS_RESTART:
+                    restart_reason = f"engine keeps failing ({e!r})"
+                    break
+            if now - last_ping >= 2.0:  # systemd kills and restarts us if these stop
+                last_ping = now
+                sd_notify("WATCHDOG=1")
             worst_cpu = max(worst_cpu, graph.cpu_usage)
+            if now - last_check >= AUDIO_CHECK_SEC:
+                last_check = now
+                restart_reason = audio_device_problem()
+                if restart_reason:
+                    break
             if args.log_every and now - last_log >= args.log_every:
                 last_log = now
                 car = engine.car_summary()
@@ -1039,11 +1122,15 @@ def run_headless(args, settings, link):
                 next_t = time.monotonic()     # fell behind (e.g. a voice build); resync
     finally:
         log("stopping")
+        sd_notify("STOPPING=1")
         if control:
             control.stop()
         if link:
             link.stop()
         graph.stop()
+    if restart_reason:              # non-zero exit: systemd restarts us on the right device
+        log(f"{restart_reason}: restarting")
+        raise SystemExit(75)
 
 
 def main():

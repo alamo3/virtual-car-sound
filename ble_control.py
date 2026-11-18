@@ -54,12 +54,32 @@ class ControlServer:
     def stop(self):
         self._stop.set()
 
+    RETRY_SEC = 10.0
+
     def _run(self):
-        self.loop = asyncio.new_event_loop()
-        try:
-            self.loop.run_until_complete(self._serve())
-        except Exception as e:           # no adapter, BlueZ down, no permission...
-            self.log(f"bluetooth control unavailable: {e}")
+        """Serve; if Bluetooth isn't there (adapter not up yet at boot, bluetoothd
+        restarting, adapter unplugged), keep retrying every RETRY_SEC."""
+        failures = 0
+        while not self._stop.is_set():
+            self.loop = asyncio.new_event_loop()
+            try:
+                self.loop.run_until_complete(self._serve())
+                failures = 0                 # served until stop() or the link went away
+            except Exception as e:           # no adapter, BlueZ down, no permission...
+                if failures == 0 or failures % 30 == 0:     # don't flood the log
+                    self.log(f"bluetooth control unavailable ({e}); retrying every "
+                             f"{self.RETRY_SEC:.0f} s")
+                failures += 1
+            finally:
+                if self.server is not None:      # unregister cleanly before retrying
+                    try:
+                        self.loop.run_until_complete(
+                            asyncio.wait_for(self.server.stop(), timeout=5.0))
+                    except Exception:
+                        pass
+                self.server = None
+                self.loop.close()
+            self._stop.wait(self.RETRY_SEC)
 
     async def _serve(self):
         from bless import (BlessServer, GATTAttributePermissions as P,
@@ -76,9 +96,18 @@ class ControlServer:
             SERVICE, LIST, C.read | C.notify, bytearray(b"#end"), P.readable)
         await self.server.start()
         self.log(f"bluetooth control: advertising as {NAME!r}")
+        quiet, n = 0, 0
         while not self._stop.is_set():
             self._notify(STATUS, self._status())
             await asyncio.sleep(1.0)
+            n += 1
+            if n % 10 == 0:             # health check: BlueZ restarted / adapter gone?
+                # either call raises if bluetoothd went away -> _run starts over
+                adv = await self.server.is_advertising()
+                conn = await self.server.is_connected()
+                quiet = 0 if (adv or conn) else quiet + 1
+                if quiet >= 2:          # not advertising and nobody connected: re-register
+                    raise RuntimeError("advertisement lost")
         await self.server.stop()
 
     # --- GATT callbacks (called on the loop's thread) -------------------------------
