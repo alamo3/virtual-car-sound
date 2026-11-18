@@ -640,7 +640,6 @@ class Engine:
         self.swell = TipInSwell()
         self.events = fx.DriveEvents()
         self.effects = fx.Effects()
-        self.effects.output.play()
         self.built = {}
         self.current = None
         self.speed = 0.0
@@ -766,6 +765,9 @@ class Engine:
 
 # --- Front ends ----------------------------------------------------------------------------
 
+PI_BUFFER_FRAMES = 512
+
+
 def make_graph(args):
     """AudioGraph on the chosen device: --output-device NAME, else a USB device if one is
     plugged in (the car speaker), else the system default. "--output-device default"
@@ -783,8 +785,13 @@ def make_graph(args):
             raise SystemExit(f"output device {want!r} not found; devices:\n  "
                              + "\n  ".join(names))
         config.output_device_name = want if want in names else hits[0]
-    if getattr(args, "buffer_size", None):
-        config.output_buffer_size = args.buffer_size
+    # 256 frames (5 ms) is fine on a laptop; a Pi's slower cores need slack for the odd
+    # slow block (Python, USB, a voice build), so ARM boards default to 512 (10.7 ms).
+    import platform
+    size = getattr(args, "buffer_size", None) or (
+        PI_BUFFER_FRAMES if platform.machine() in ("aarch64", "armv7l", "armv6l") else None)
+    if size:
+        config.output_buffer_size = size
     return AudioGraph(config)
 
 
@@ -919,7 +926,9 @@ def run_headless(args, settings, link):
             if args.log_every and now - last_log >= args.log_every:
                 last_log = now
                 car = engine.car_summary()
+                fxs = ",".join(engine.effects.playing)
                 log(f"{engine.status().strip()}   | audio cpu {worst_cpu * 100:3.0f}% (peak)"
+                    + (f" fx {fxs}" if fxs else "")
                     + (f"   | {car}" if car else ""))
                 worst_cpu = 0.0
             next_t += period
@@ -978,7 +987,8 @@ def main():
     ap.add_argument("--list-devices", action="store_true",
                     help="print the audio output devices and exit")
     ap.add_argument("--buffer-size", type=int, default=None,
-                    help="audio buffer in frames; raise it (1024, 2048) if the Pi crackles")
+                    help="audio buffer in frames (default 256, or %d on a Pi); raise it "
+                         "(1024) if it crackles" % PI_BUFFER_FRAMES)
     hl.add_argument("--no-boot-chime", action="store_true",
                     help="headless: don't chime at start-up (it still chimes when car data "
                          "first appears)")

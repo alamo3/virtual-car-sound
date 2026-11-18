@@ -165,6 +165,24 @@ class _OneShot:
             line.trigger()
 
 
+class _Section:
+    """One effect branch, connected to the output only until its hold time runs out."""
+
+    def __init__(self, node):
+        self.node, self.on, self.until = node, False, 0.0
+
+    def hold(self, now, sec):
+        self.until = max(self.until, now + sec)
+        if not self.on:
+            self.node.play()
+            self.on = True
+
+    def expire(self, now):
+        if self.on and now >= self.until:
+            self.node.stop()
+            self.on = False
+
+
 class Effects:
     LEVEL = 0.8
     REGEN_HZ_STOPPED, REGEN_HZ_TOP = 80.0, 160.0   # generator hum follows speed
@@ -178,7 +196,10 @@ class Effects:
                         "master": Constant(1.0), "shift_amp": Constant(1.0)}
         self._clock = 0.0                  # audio-side time, advanced by update(dt)
         self._pending = []                 # (due time, callable) for staggered chime notes
-        self.output = self._build()
+        # Each effect is its own branch that only plays while it can be heard: a branch
+        # that isn't playing costs no CPU. Running them all silently cost ~3x a voice,
+        # which a Pi 3B+ can't afford.
+        self._sections = {name: _Section(node) for name, node in self._build().items()}
 
     def _build(self):
         t = self.targets
@@ -261,8 +282,10 @@ class Effects:
             self.swell_env.node * 0.22
         chime = chime + swell + CombDelay(chime, 0.23, 0.3) * 0.4
 
-        mix = launch + regen + reverse + thump + chime
-        return Tanh(mix * self.LEVEL * Smooth(t["master"], 0.999))
+        master = Smooth(t["master"], 0.999) * self.LEVEL
+        return {name: Tanh(node * master) for name, node in
+                (("launch", launch), ("regen", regen), ("reverse", reverse),
+                 ("shift", thump), ("chime", chime))}
 
     # -- control --------------------------------------------------------------------------
     def update(self, dt, regen=0.0, reverse=False, enabled=True, speed_ratio=0.0):
@@ -277,19 +300,35 @@ class Effects:
         self.targets["regen_hz"].set_value(
             self.REGEN_HZ_STOPPED + (self.REGEN_HZ_TOP - self.REGEN_HZ_STOPPED)
             * min(1.0, max(0.0, speed_ratio)))
+        # continuous effects run while asked for, plus a moment to fade out
+        sec = self._sections
+        if enabled and regen > 0.001:
+            sec["regen"].hold(now, 0.5)
+        if enabled and reverse:
+            sec["reverse"].hold(now, 0.5)
+        for s in sec.values():
+            s.expire(now)
+
+    @property
+    def playing(self):
+        """Names of the effect branches currently running (for CPU checks)."""
+        return [n for n, s in self._sections.items() if s.on]
 
     def launch(self):
+        self._sections["launch"].hold(self._clock, 2.2)
         for shot in (self.impact_env, self.body_env, self.spool_env, self.arc_env,
                      self.air_env):
             shot.fire()
 
     def shift(self, up=True):
         self.targets["shift_amp"].set_value(1.0 if up else 0.35)
+        self._sections["shift"].hold(self._clock, 0.4)
         self.thump_env.fire()
         self.click_env.fire()
 
     def power_on(self):
         now = self._clock
+        self._sections["chime"].hold(now, 4.5)
         self.swell_env.fire()
         for i, note in enumerate(self.chime_notes):
             self._pending.append((now + 0.25 + i * self.CHIME_STEP_SEC, note.fire))
