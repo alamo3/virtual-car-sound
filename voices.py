@@ -85,6 +85,7 @@ TRIM_DB: dict[str, float] = {
     'Action Pulse': +5.1,
     'Trailer Brass': +6.6,
     'Strings & Choir': +2.9,
+    'Grand Tourer': +7.3,
 }
 
 
@@ -623,6 +624,67 @@ class StringsChoir(_ScoreVoice):
         self.targets["choir"].set_value(0.15 + 0.85 * min(1.0, r * 1.5))
         self.targets["gain"].set_value(_ev_gain(st, self.LEVEL))
         return chord
+
+
+class GrandTourer(Voice):
+    """Serious, cinematic: a low string-and-brass ensemble that behaves like a motor.
+
+    No chord changes and no melody -- one open harmony (root, fifth, octave; no third, so
+    it is neither happy nor sad) that glides continuously with speed, the way a motor's
+    pitch does. The drama comes from texture and weight instead:
+      - ensemble: low strings, three detuned saws per note, dark and slowly breathing;
+        pedal is bow pressure -- it opens the filter and thickens the sound
+      - power: a restrained brass growl (root + fifth, gently driven) that only rises
+        under real throttle, so hard acceleration feels heavy, not loud
+      - height: a soft high harmonic (two octaves and a fifth up) that grows with speed,
+        like high strings holding a tense note -- speed you hear as altitude
+      - a sine under the root for weight, and a concert-hall reverb for space
+    Root G1 (49 Hz) at a standstill -> B2 (123 Hz) flat out.
+    """
+    name = "Grand Tourer"
+    F_IDLE, F_TOP = 49.0, 123.0
+    LEVEL = 1.7
+
+    def build(self):
+        t = {"freq": _target(self.F_IDLE), "bow": _target(500.0), "body": _target(0.6),
+             "power": _target(0.0), "power_f": _target(500.0), "height": _target(0.0),
+             "gain": _target(0.0)}
+        f = Smooth(t["freq"], 0.9995)
+        breathe = SineLFO(0.13, 0.85, 1.0)                 # slow bowing swell
+        ens = None
+        for ratio, amp, det in ((1.0, 0.8, 0.004), (1.5, 0.7, 0.003), (2.0, 0.8, 0.005),
+                                (3.0, 0.3, 0.004)):
+            fr = f * ratio
+            sec = (SawOscillator(fr * (1.0 - det)) + SawOscillator(fr)
+                   + SawOscillator(fr * (1.0 + det))) * amp
+            ens = sec if ens is None else ens + sec
+        ens = SVFilter(ens * 0.09, "low_pass", cutoff=Smooth(t["bow"], 0.999),
+                       resonance=0.12) * breathe * Smooth(t["body"], 0.9995)
+
+        growl_src = SawOscillator(f * 0.998) + SawOscillator(f * 1.5 * 1.002) * 0.8
+        power = Tanh(SVFilter(growl_src, "band_pass", cutoff=Smooth(t["power_f"], 0.999),
+                              resonance=0.4) * 1.8) * 0.35 * Smooth(t["power"], 0.9995)
+
+        hf = f * 6.0                                       # two octaves + a fifth up
+        height = (SineOscillator(hf) + SineOscillator(hf * 1.004) * 0.7) \
+            * SineLFO(0.31, 0.6, 1.0) * 0.06 * Smooth(t["height"], 0.9995)
+
+        weight = SineOscillator(f) * 0.18
+        out = _hall(ens + power + height + weight, wet=0.3)
+        return Tanh(out * Smooth(t["gain"], 0.999)), t
+
+    def update(self, st):
+        r, p = st.motor_ratio, st.pedal
+        self.targets["freq"].set_value(self.F_IDLE * (self.F_TOP / self.F_IDLE) ** (r ** 0.85)
+                                       * st.pitch_mul)
+        self.targets["bow"].set_value(650.0 + 900.0 * r + 1800.0 * p ** 1.3 + 700.0 * st.swell)
+        self.targets["body"].set_value(0.6 + 0.4 * p)
+        heavy = min(1.0, max(0.0, (p - 0.35) / 0.65)) ** 1.2
+        self.targets["power"].set_value(heavy + 0.5 * st.swell)
+        self.targets["power_f"].set_value(350.0 + 500.0 * heavy + 300.0 * r)
+        self.targets["height"].set_value(min(1.0, r * 1.6))
+        self.targets["gain"].set_value(_ev_gain(st, self.LEVEL))
+        return ""
 
 
 def _interp_log(x, points):
