@@ -766,11 +766,34 @@ class Engine:
 
 # --- Front ends ----------------------------------------------------------------------------
 
+def make_graph(args):
+    """AudioGraph on the chosen device: --output-device NAME, else a USB device if one is
+    plugged in (the car speaker), else the system default. "--output-device default"
+    skips the USB search. A NAME may be any unique part of the device name."""
+    config = AudioGraphConfig()
+    want = args.output_device
+    names = AudioGraph.get_output_device_names()
+    if want is None:
+        usb = [n for n in names if "usb" in n.lower()]
+        if usb:
+            config.output_device_name = usb[0]
+    elif want.lower() != "default":
+        hits = [n for n in names if want.lower() in n.lower()]
+        if not hits:
+            raise SystemExit(f"output device {want!r} not found; devices:\n  "
+                             + "\n  ".join(names))
+        config.output_device_name = want if want in names else hits[0]
+    if getattr(args, "buffer_size", None):
+        config.output_buffer_size = args.buffer_size
+    return AudioGraph(config)
+
+
 def run_gui(args, settings, link):
     from tkinter import (Tk, Scale, Checkbutton, BooleanVar, StringVar, OptionMenu, Label,
                          Button, HORIZONTAL)
 
-    graph = AudioGraph()
+    graph = make_graph(args)
+    print(f"audio: {graph.output_device_name}")
     if link:
         link.start()
     window = Tk()
@@ -867,12 +890,7 @@ def run_headless(args, settings, link):
         link.log = log
         link.start()                 # adapter init runs alongside the audio start-up
 
-    config = AudioGraphConfig()
-    if args.output_device:
-        config.output_device_name = args.output_device
-    if args.buffer_size:
-        config.output_buffer_size = args.buffer_size
-    graph = AudioGraph(config)
+    graph = make_graph(args)
     log(f"audio: {graph.output_device_name or 'default device'}, "
         f"{graph.sample_rate} Hz, buffer {graph.output_buffer_size}")
 
@@ -953,11 +971,13 @@ def main():
                          "and keep reconnecting; logs status lines to stdout")
     hl.add_argument("--demo", action="store_true",
                     help="with --headless and no --car: loop a scripted 40 s drive")
-    hl.add_argument("--output-device", default=None,
-                    help="audio output device name (see --list-devices; default: system default)")
-    hl.add_argument("--list-devices", action="store_true",
+    ap.add_argument("--output-device", default=None,
+                    help="audio output: any unique part of a device name (see --list-devices). "
+                         "Default: the first USB audio device, else the system default; "
+                         "'default' forces the system default")
+    ap.add_argument("--list-devices", action="store_true",
                     help="print the audio output devices and exit")
-    hl.add_argument("--buffer-size", type=int, default=None,
+    ap.add_argument("--buffer-size", type=int, default=None,
                     help="audio buffer in frames; raise it (1024, 2048) if the Pi crackles")
     hl.add_argument("--no-boot-chime", action="store_true",
                     help="headless: don't chime at start-up (it still chimes when car data "
