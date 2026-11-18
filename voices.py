@@ -59,7 +59,7 @@ def _ev_gain(st: State, level: float, idle_level: float = 0.5) -> float:
 # (b) regenerates the bass as its own 2nd/4th harmonics ("virtual bass"): the ear hears the
 # missing fundamental from its overtones, so the note still sounds as deep as it is.
 # Full-wave rectification makes those harmonics in proportion to the bass level.
-SMALL_SPEAKER = True
+SMALL_SPEAKER = False
 SMALL_HP_HZ = 110.0          # below this the small-speaker path is cut
 VBASS_FROM_HZ = 140.0        # bass below this is turned into harmonics
 VBASS_LEVEL = 1.6
