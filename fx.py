@@ -34,7 +34,7 @@ LAUNCH_COOLDOWN_SEC = 4.0
 POWER_ON_AFTER_STALE_SEC = 5.0
 # Virtual gears: upshift speeds (km/h). Pitch climbs GEAR_PITCH_DEPTH through each gear and
 # drops back on the upshift, with a brief torque-cut duck and a thump.
-GEAR_SHIFT_KMH = (18.0, 38.0, 60.0, 85.0, 115.0)
+GEAR_SHIFT_KMH = (30.0, 60.0, 90.0, 120.0)   # 1->2 at 30, 2->3 at 60 (as drivetrain.py)
 GEAR_HYSTERESIS_KMH = 2.5
 GEAR_PITCH_DEPTH = 0.08        # 8 % (~1.3 semitones) climb per gear
 SHIFT_DUCK, SHIFT_DUCK_SEC = 0.55, 0.13

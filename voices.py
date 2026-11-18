@@ -16,7 +16,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 import numpy as np
-from signalflow import (Abs, ASREnvelope, Buffer, Clip, CombDelay, Constant, EnvelopeBuffer,
+from signalflow import (Abs, ASREnvelope, BiquadFilter, SawLFO, Buffer, Clip, CombDelay, Constant, EnvelopeBuffer,
                         FeedbackDelayNetwork,
                         Granulator, Impulse, PinkNoise, Pow, RandomUniform, SawOscillator, SineLFO, SineOscillator, Smooth,
                         SquareOscillator, SVFilter, Tanh, TriangleOscillator, WhiteNoise)
@@ -31,6 +31,7 @@ class State:
     active: bool         # False = no data from the car: go silent
     dt: float
     pitch_mul: float = 1.0   # virtual gears: <1 just after an upshift, climbing to 1
+    virtual_tach: float | None = None  # 0..1 within the selected virtual gear
 
 
 def _target(value):
@@ -60,9 +61,12 @@ def _ev_gain(st: State, level: float, idle_level: float = 0.5) -> float:
 # missing fundamental from its overtones, so the note still sounds as deep as it is.
 # Full-wave rectification makes those harmonics in proportion to the bass level.
 SMALL_SPEAKER = False
-SMALL_HP_HZ = 110.0          # below this the small-speaker path is cut
-VBASS_FROM_HZ = 140.0        # bass below this is turned into harmonics
+# Tuned to the measured USB speaker (analysis/speaker/, hearing.py): -12 dB at 100 Hz,
+# -6.5 dB at 125 Hz, full level from ~160 Hz, and its own +6 dB resonance at 200 Hz.
+SMALL_HP_HZ = 120.0          # below this the small-speaker path is cut
+VBASS_FROM_HZ = 150.0        # bass below this is turned into harmonics
 VBASS_LEVEL = 1.6
+SPEAKER_BUMP_HZ, SPEAKER_BUMP_DB = 200.0, -4.0    # cancels the speaker's resonance
 
 # Loudness trims in dB, from A-weighted measurements of each voice through the same drive
 # (see demos/). They make switching voices keep the same perceived level.
@@ -89,6 +93,22 @@ TRIM_DB: dict[str, float] = {
     'Grand Touring': +8.0,
     'Dreadnought': +9.0,
     'Jet Turbine': +9.8,
+    'IONIQ 5 N Evolution': +10.1,
+    'Evolution (synth)': -5.0,
+    'Supersonic (synth)': -9.2,
+    'Evolution (clean)': +8.1,
+    'Supersonic (clean)': +5.9,
+    'Evolution (dry)': -3.3,
+    'Supersonic (dry)': -5.4,
+    'Evolution (de-reverb)': +8.8,
+    'Evolution (SonicMaster)': +7.6,
+    'Geared Engine': +17.1,
+    'Supersonic Jet': +0.7,
+    'Loop Engine (BMW M3 GTR)': -0.4,
+    'Loop Engine (BMW M3 GTR interior)': +4.2,
+    'Loop Engine (Audi R8 interior)': -0.2,
+    'Loop Engine (IONIQ 5 N mod interior)': +1.0,
+    'Battleship Battalion (kit)': +3.5,       # matched as heard on the USB speaker (bassy: A-weighting misleads)
 }
 
 
@@ -98,6 +118,8 @@ def output_stage(node, small_ctrl, master=None):
     vbass = SVFilter(SVFilter(Abs(low), "high_pass", cutoff=SMALL_HP_HZ, resonance=0.0),
                      "low_pass", cutoff=800.0, resonance=0.0) * VBASS_LEVEL
     small = SVFilter(node, "high_pass", cutoff=SMALL_HP_HZ, resonance=0.0) + vbass
+    small = BiquadFilter(small, "peak", cutoff=SPEAKER_BUMP_HZ, resonance=1.4 * 3.1623,
+                         peak_gain=SPEAKER_BUMP_DB)
     mixed = node * (1.0 - sm) + small * sm
     if master is not None:
         mixed = mixed * Smooth(master, 0.998)   # ducking for effects (~10 ms glide)
@@ -134,6 +156,124 @@ class Voice:
 # ---------------------------------------------------------------------------------------
 # Futuristic EV voices
 # ---------------------------------------------------------------------------------------
+
+class HypercarResponse(Voice):
+    """Electric performance voice with a load-sensitive resonant mechanism.
+
+    Motor orders excite a fixed resonator bank. Pedal changes their harmonic content
+    and weight, while a short tip-in layer adds presence without a permanent whine.
+    This is a sound-design model, not an electric motor physics simulation.
+    """
+    name = "Hypercar Response"
+
+    def __init__(self):
+        self.load = 0.0
+        super().__init__()
+
+    def build(self):
+        t = {key: _target(value) for key, value in {
+            "freq": 95.0, "load": 0.0, "surge": 0.0, "gain": 0.0,
+        }.items()}
+        f = Smooth(t["freq"], 0.9995)
+        load = Smooth(t["load"], 0.999)
+        surge = Smooth(t["surge"], 0.998)
+
+        # A rotating excitation, not an exhaust pulse train. Soft saturation creates
+        # additional orders under load for the fixed structural modes to respond to.
+        rotor = TriangleOscillator(f) * 0.65 + SawOscillator(f * 1.5) * 0.22
+        rotor = SVFilter(rotor, "low_pass", cutoff=1800.0, resonance=0.0)
+        driven = Tanh(rotor * (1.0 + 2.4 * load + 0.7 * surge))
+        body = SVFilter(driven, "band_pass", cutoff=290.0, resonance=0.62) * 0.52
+        body += SVFilter(driven, "band_pass", cutoff=510.0, resonance=0.70) * 0.34
+        body += SVFilter(driven, "band_pass", cutoff=860.0, resonance=0.66) * 0.14
+        core = SVFilter(driven, "low_pass", cutoff=1050.0, resonance=0.0) * 0.25
+        mix = (core + body) * (0.22 + 0.25 * load + 0.10 * surge)
+        return mix * Smooth(t["gain"], 0.999), t
+
+    def update(self, st):
+        r = max(0.0, min(1.0, st.motor_ratio))
+        pedal = max(0.0, min(1.0, st.pedal))
+        # A faster attack and slower release make the response feel deliberate.
+        tau = 0.12 if pedal > self.load else 0.45
+        self.load += (pedal - self.load) * (1.0 - math.exp(-max(0.0, st.dt) / tau))
+        self.targets["freq"].set_value((90.0 + 125.0 * r) * st.pitch_mul)
+        self.targets["load"].set_value(self.load)
+        self.targets["surge"].set_value(max(0.0, min(1.0, st.swell)))
+        moving = min(1.0, r / 0.05)
+        self.targets["gain"].set_value((0.6 + 0.4 * moving) * 1.8 if st.active else 0.0)
+        return "loaded" if self.load > 0.5 else "cruise"
+
+
+class HypercarDrive(Voice):
+    """Experimental EV: motor orders exciting fixed structural resonances.
+
+    No musical chords or repetitive tremolo. The body resonances stay fixed
+    as the motor orders move through them; throttle changes excitation.
+    """
+    name = "Hypercar Drive"
+    LEVEL = 1.0
+    BODY_LEVEL = 0.26
+    TEXTURE_LEVEL = 0.12
+    WHINE_LEVEL = 0.075
+
+    def build(self):
+        t = {key: _target(value) for key, value in {
+            "order_hz": 90.0, "load": 0.0, "texture": 0.0,
+            "presence": 0.0, "air": 0.0, "gain": 0.0,
+        }.items()}
+        f = Smooth(t["order_hz"], 0.9995)
+        load = Smooth(t["load"], 0.999)
+        texture = Smooth(t["texture"], 0.999)
+        presence = Smooth(t["presence"], 0.999)
+
+        # Quiet motor orders, deliberately avoiding a loud sawtooth fundamental.
+        orders = (SineOscillator(f) * 0.45
+                  + SineOscillator(f * 2.02) * 0.24
+                  + SineOscillator(f * 3.97) * 0.13)
+        orders *= 0.065 + 0.09 * load
+
+        # Structural modes are fixed in Hz: motor pitch passes through them.
+        # Parallel noise-excited bandpass filters approximate a resonator bank.
+        exc = PinkNoise()
+        modes = None
+        for hz, strength, q in ((285.0, 1.0, 0.72),
+                                (465.0, 0.72, 0.79),
+                                (735.0, 0.50, 0.83),
+                                (1120.0, 0.30, 0.86)):
+            mode = SVFilter(exc, "band_pass", cutoff=hz, resonance=q) * strength
+            modes = mode if modes is None else modes + mode
+        body = modes * self.BODY_LEVEL * (0.18 + 0.82 * load)
+
+        # Separate, broad mechanical texture responds primarily to torque.
+        grit = SVFilter(WhiteNoise(), "band_pass", cutoff=900.0,
+                        resonance=0.38)
+        grit = SVFilter(grit, "low_pass", cutoff=2600.0, resonance=0.0)
+        grit *= self.TEXTURE_LEVEL * texture
+
+        # The soaring top end remains quiet until the motor is spinning quickly.
+        high = (SineOscillator(f * 5.13) * 0.7
+                + SineOscillator(f * 7.08) * 0.3)
+        high *= self.WHINE_LEVEL * presence
+
+        air = SVFilter(PinkNoise(), "high_pass", cutoff=500.0,
+                       resonance=0.0) * Smooth(t["air"], 0.999) * 0.018
+        mix = orders + body + grit + high + air
+        mix = SVFilter(mix, "low_pass", cutoff=3800.0, resonance=0.0)
+        return mix * Smooth(t["gain"], 0.999), t
+
+    def update(self, st):
+        r = max(0.0, min(1.0, st.motor_ratio))
+        p = max(0.0, min(1.0, st.pedal))
+        swell = max(0.0, min(1.0, st.swell))
+        # The motor-order floor is a deliberate sound-design choice at idle.
+        self.targets["order_hz"].set_value((75.0 + 185.0 * r) * st.pitch_mul)
+        self.targets["load"].set_value(min(1.0, 0.15 + 0.8 * p + 0.35 * swell))
+        self.targets["texture"].set_value(min(1.0, 0.05 + 0.85 * p ** 1.5 + 0.4 * swell))
+        self.targets["presence"].set_value(min(1.0, r ** 1.6 * (0.2 + 0.8 * p)))
+        self.targets["air"].set_value(r * r)
+        self.targets["gain"].set_value(_ev_gain(st, self.LEVEL))
+        return "loaded" if p > 0.5 else "coasting"
+
 
 class Slipstream(Voice):
     """Electric performance sound with a slowly responding, load-driven rotor.
@@ -1253,6 +1393,9 @@ class RecordingVoice(Voice):
     @classmethod
     def from_map(cls, map_path):
         d = json.loads(Path(map_path).read_text())
+        if d.get("samples"):                     # steady stretches: play it as an instrument
+            return SampledRecording(d["file"], d["samples"], name=d.get("name"),
+                                    idle_hz=d.get("idle_hz"), hz_per_kmh=d.get("hz_per_kmh"))
         return cls(file=d["file"], name=d.get("name"))
 
     @staticmethod
@@ -1270,8 +1413,10 @@ class RecordingVoice(Voice):
         return out
 
     # -- map ---------------------------------------------------------------------------
-    def set_map(self, accel, decel, pulse_until=None, hum_from=None):
-        """accel/decel: iterables of (km/h, seconds into the file)."""
+    def set_map(self, accel, decel, pulse_until=None, hum_from=None, plateau=None):
+        """accel/decel: iterables of (km/h, seconds into the file). plateau: optional
+        (start, end) seconds of a held, top-pitch stretch played past the top speed;
+        by default the second after the end of the accel stretch."""
         self.accel = sorted((float(k), float(s)) for k, s in accel)
         self.decel = sorted((float(k), float(s)) for k, s in decel)
         if pulse_until is not None:
@@ -1281,19 +1426,21 @@ class RecordingVoice(Voice):
         self.top_kmh = self.accel[-1][0]
         self.decel_top = self.decel[-1][0] if self.decel else 0.0
         end = self.accel[-1][1]
-        self.plateau = (end, min(self.duration - 0.05, end + 1.0))
+        self.plateau = tuple(plateau) if plateau else (end, min(self.duration - 0.05, end + 1.0))
+        self._plateau_set = bool(plateau)
 
     def map_dict(self):
         return {"file": str(self.source.resolve()), "name": self.name,
                 "accel": self.accel, "decel": self.decel,
-                "pulse_until": self.pulse_until, "hum_from": self.hum_from}
+                "pulse_until": self.pulse_until, "hum_from": self.hum_from,
+                **({"plateau": list(self.plateau)} if self._plateau_set else {})}
 
     def load_map(self, path=None):
         path = Path(path or self.map_path)
         if path.exists():
             d = json.loads(path.read_text())
             self.set_map(d["accel"], d.get("decel", []), d.get("pulse_until"),
-                         d.get("hum_from"))
+                         d.get("hum_from"), d.get("plateau"))
             return True
         return False
 
@@ -1427,6 +1574,96 @@ class RecordingVoice(Voice):
         g = 0.0 if not active else (0.6 + 0.4 * st.pedal) * corr * self.LEVEL
         self.targets["gain"].set_value(g)
         return f"{'slowing' if self._decel > 0.5 else 'speeding'} @ {pos_a if self._decel <= 0.5 else pos_d:4.2f}s"
+
+
+class SampledRecording(Voice):
+    """A recording played like a sampled instrument: steady stretches only, retuned.
+
+    Revs and drives sweep pitch quickly, so grains frozen out of a moving passage hold a
+    chirp and smear. Instead, the map lists steady stretches of the recording, each with
+    its pitch (automap.py --samples finds them). Speed sets a target pitch; the two
+    samples either side of it play as grain streams retuned to that pitch by playback
+    rate, crossfaded by how close each is -- so retuning stays small and the real timbre
+    survives. Grains come from random spots in each stretch, so it never loops audibly.
+    """
+    TARGET_RMS = RecordingVoice.TARGET_RMS
+    LEVEL = 3.0
+    GRAIN_SEC = 0.1
+
+    def __init__(self, file, samples, name=None, idle_hz=None, hz_per_kmh=None):
+        self._buf, self.file = load_audio_buffer(file)
+        self.source = Path(file)
+        self.name = name or f"Sampled: {self.source.stem}"
+        self.samples = sorted((float(a), float(b), float(f)) for a, b, f in samples)
+        self.samples.sort(key=lambda s: s[2])
+        self.idle_hz = idle_hz or self.samples[0][2]
+        top = self.samples[-1][2]
+        # by default the top sample's pitch is reached at 100 km/h
+        self.hz_per_kmh = hz_per_kmh or (top - self.idle_hz) / 100.0
+        self._normalise()
+        super().__init__()
+
+    def _normalise(self):
+        sr = int(self._buf.sample_rate)
+        mono = np.array(self._buf.data).mean(axis=0)
+        # level each sample's stretch to the same loudness, so crossfades don't pump
+        gains = []
+        for a, b, _ in self.samples:
+            seg = mono[int(a * sr):int(b * sr)]
+            gains.append(self.TARGET_RMS / (float(np.sqrt(np.mean(seg ** 2))) + 1e-9))
+        self._gains = gains
+        self._mono = Buffer(1, len(mono), [mono.tolist()])
+        self._mono.sample_rate = sr
+
+    def build(self):
+        t = {"gain": _target(0.0), "bright": _target(4000.0)}
+        mix = None
+        self._grains = []
+        for i, (a, b, f) in enumerate(self.samples):
+            t[f"rate{i}"] = _target(1.0)
+            t[f"w{i}"] = _target(1.0 if i == 0 else 0.0)
+            clock = Impulse(3.0 / self.GRAIN_SEC)
+            # grains from random spots in the stretch: no audible loop
+            half = max(0.0, (b - a - self.GRAIN_SEC) / 2.0)
+            rate = Smooth(t[f"rate{i}"], 0.999)
+            pos = RandomUniform((a + b) / 2.0 - half, (a + b) / 2.0 + half, clock=clock)
+            g = Granulator(self._mono, clock=clock, pos=pos, duration=self.GRAIN_SEC,
+                           rate=rate)
+            self._grains.append(g)
+            layer = g * (self._gains[i] * 0.45) * Smooth(t[f"w{i}"], 0.999)
+            mix = layer if mix is None else mix + layer
+        out = SVFilter(mix, "low_pass", cutoff=Smooth(t["bright"], 0.999), resonance=0.0)
+        return out * Smooth(t["gain"], 0.999), t
+
+    def target_hz(self, speed):
+        return self.idle_hz + self.hz_per_kmh * max(0.0, speed)
+
+    def update(self, st):
+        f = self.target_hz(st.speed_kmh) * st.pitch_mul
+        pitches = [s[2] for s in self.samples]
+        lf = math.log(f)
+        if f <= pitches[0]:
+            lo = hi = 0
+            w_hi = 0.0
+        elif f >= pitches[-1]:
+            lo = hi = len(pitches) - 1
+            w_hi = 0.0
+        else:
+            hi = next(i for i, p in enumerate(pitches) if p >= f)
+            lo = hi - 1
+            w_hi = (lf - math.log(pitches[lo])) / (math.log(pitches[hi]) - math.log(pitches[lo]))
+        for i, p in enumerate(pitches):
+            self.targets[f"rate{i}"].set_value(f / p)
+            w = 0.0
+            if i == lo:
+                w = math.cos(w_hi * math.pi / 2) if lo != hi else 1.0
+            if i == hi and hi != lo:
+                w = math.sin(w_hi * math.pi / 2)
+            self.targets[f"w{i}"].set_value(w)
+        self.targets["bright"].set_value(1800.0 + 5000.0 * st.pedal ** 1.2 + 2000.0 * st.swell)
+        g = 0.0 if not st.active else (0.55 + 0.45 * st.pedal) * self.LEVEL
+        self.targets["gain"].set_value(g)
+        return f"{f:4.0f} Hz  from {pitches[lo]:.0f}" + (f"/{pitches[hi]:.0f}" if hi != lo else "")
 
 
 class RecordingI3(RecordingVoice):

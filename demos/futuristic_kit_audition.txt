@@ -1,0 +1,8 @@
+1    0.0 s  Javelin Repairship  (4 states: idle -> high, 2.5 s each)
+2   11.2 s  Battleship Battalion  (4 states: idle -> high, 2.5 s each)
+3   22.3 s  Mountain Carrier  (4 states: idle -> high, 2.5 s each)
+4   33.5 s  Battlestar Kipper  (4 states: idle -> high, 2.5 s each)
+5   44.6 s  Corvette  (4 states: idle -> high, 2.5 s each)
+6   55.8 s  Cargoship Duke  (4 states: idle -> high, 2.5 s each)
+7   66.9 s  Space Cruiser E Warlock  (4 states: idle -> high, 2.5 s each)
+8   78.1 s  Cruiseship  (4 states: idle -> high, 2.5 s each)

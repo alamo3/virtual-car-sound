@@ -1,5 +1,7 @@
+bless==0.3.0
 certifi==2026.10.23
 charset-normalizer==3.5.2
+dbus-next==0.2.3
 idna==3.20
 numpy==2.5.4
 pyserial==3.5

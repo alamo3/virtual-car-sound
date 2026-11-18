@@ -1,4 +1,7 @@
+import json
 import time
+from pathlib import Path
+
 import numpy as np
 from signalflow import *
 import functools
@@ -7,6 +10,9 @@ import threading
 from dataclasses import dataclass
 
 import fx
+import geared
+import jet
+import loopengine
 import voices
 
 MAX_PEDAL = 1.0
@@ -104,7 +110,13 @@ CM_CUTOFF_MIN = 4500.0       # keeps the whistle audible even when coasting
 
 # Idle hum: at standstill the motor is "ready", not off -- it plays at the bottom of the
 # pitch range, quieter, and the pedal still brightens it (e.g. pressing it on the brake).
-MUTE_BELOW_RPM = 30.0    # all voices go silent below this (standstill)
+MUTE_BELOW_RPM = 30.0    # below this (and no pedal) the car counts as standing still
+# Standstill: instead of cutting off the moment the car stops, the voice keeps idling for
+# STANDSTILL_HOLD_SEC, then fades over STANDSTILL_FADE_SEC to the idle-hum level (0 =
+# silence, the default). Moving or touching the pedal brings it back in START_FADE_SEC.
+STANDSTILL_HOLD_SEC = 3.0
+STANDSTILL_FADE_SEC = 2.5
+START_FADE_SEC = 0.15
 IDLE_LEVEL = 0.5         # standstill volume relative to the normal coasting level
 IDLE_RAMP_RPM = 500.0    # idle level blends into the normal level over this much rpm
 MESH_FADE_RPM = 300.0    # gear-mesh tone fades out below this: stationary gears don't whine
@@ -262,6 +274,25 @@ def create_carmove_sound():
     mix = (body + whistle) * 0.33       # ~same loudness as the other voices, no clipping
     filtered = SVFilter(mix, "low_pass", cutoff=cutoff, resonance=0.0)
     return filtered * gain, targets
+
+
+class StandstillFade:
+    """Level 0..1 for the voice: 1 while moving; after stopping, held for a moment, then
+    faded to `hum` (0 = silent). Starts silent, so a parked car powering on stays quiet."""
+
+    def __init__(self):
+        self.level = 0.0
+        self.stopped_for = 1e9
+
+    def step(self, moving: bool, dt: float, hum: float = 0.0) -> float:
+        if moving:
+            self.stopped_for = 0.0
+            self.level += (1.0 - self.level) * min(1.0, dt / START_FADE_SEC)
+        else:
+            self.stopped_for += dt
+            if self.stopped_for > STANDSTILL_HOLD_SEC and self.level > hum:
+                self.level = max(hum, self.level - dt / STANDSTILL_FADE_SEC)
+        return self.level
 
 
 class TipInSwell:
@@ -478,17 +509,33 @@ class HumVoice(voices.Voice):
         return ""
 
 
-VOICES = {v.name: v for v in (voices.Slipstream, voices.PrecisionDrive, voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,
+VOICES = {v.name: v for v in (jet.SupersonicJet, geared.GearedEngine, voices.HypercarResponse, voices.HypercarDrive, voices.Slipstream, voices.PrecisionDrive, voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,
                               voices.CinematicDrive, voices.ActionPulse, voices.TrailerBrass,
                               voices.StringsChoir, voices.Cathedral, voices.GrandTouring, voices.Dreadnought, voices.JetTurbine, voices.InverterWhine, voices.Maglev,
                               voices.WarpCore, voices.Theremin, voices.HoverTurbine,
                               JetsonsLowVoice,
                               JetsonsVoice, HumVoice,
                               voices.V8Muscle, voices.Inline4Sport)}
+import reference_voices as _reference_voices
+if _reference_voices.REFERENCE.is_file():
+    VOICES.update({v.name: v for v in (_reference_voices.EvolutionReference,
+                                       _reference_voices.SupersonicReference)})
+import boom_voices as _boom_voices
+for _voice in (_boom_voices.BoomEvolution, _boom_voices.BoomSupersonic):
+    if _voice.available():
+        VOICES[_voice.name] = _voice
 # every recording mapped with mapper.py (maps/*.json) becomes a voice too
 for _name, _path in voices.RecordingVoice.saved_maps():
     VOICES[_name] = functools.partial(voices.RecordingVoice.from_map, _path)
+import resynth as _resynth
+for _name, _path in _resynth.profiles():           # resynth.py recreations of recordings
+    VOICES[_name] = functools.partial(_resynth.voice_class(), _path)
 import presets as _presets
+# game-style loop engines, only where their (local, unshareable) sound sets exist
+for _cls in (loopengine.LoopEngineIoniq, loopengine.KitBattalion, loopengine.LoopEngineInterior, loopengine.LoopEngine,
+             loopengine.LoopEngineAudi):
+    if loopengine.available(_cls.SET):
+        VOICES[_cls.name] = _cls
 _presets.register(VOICES)          # sound-lab presets (presets/*.json) become voices too
 DEFAULT_VOICE = "Jetsons i3 (recording)"
 
@@ -618,8 +665,42 @@ class Settings:
     small_speaker: bool = voices.SMALL_SPEAKER
     effects: bool = True
     cruise_quiet: bool = True
-    virtual_gears: bool = False
+    virtual_gears: bool = True
     reverse_test: bool = False
+    idle_hum: float = 0.0          # level kept at a standstill after the fade (0 = silent)
+    volume: float = 1.0            # master volume (the phone app's slider)
+
+
+# Settings the phone changes are saved here and restored at the next start, so the car
+# comes up the way it was left. Only the fields below are stored.
+SETTINGS_FILE = Path.home() / ".config" / "virtual-car-sound" / "settings.json"
+SAVED_FIELDS = ("voice", "volume", "effects", "small_speaker", "virtual_gears", "cruise_quiet",
+                "idle_hum")
+
+
+def save_settings(settings, path=None):
+    path = Path(path or SETTINGS_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({k: getattr(settings, k) for k in SAVED_FIELDS}, indent=1))
+    tmp.replace(path)                      # atomic: a power cut never leaves half a file
+
+
+def load_settings(settings, path=None, log=print):
+    """Apply a saved settings file over `settings` (unknown voices are ignored)."""
+    path = Path(path or SETTINGS_FILE)
+    if not path.exists():
+        return settings
+    try:
+        saved = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        log(f"settings: ignoring {path}: {e}")
+        return settings
+    for k in SAVED_FIELDS:
+        if k in saved and (k != "voice" or saved[k] in VOICES):
+            setattr(settings, k, type(getattr(settings, k))(saved[k]))
+    log(f"settings: restored from {path}")
+    return settings
 
 
 class Engine:
@@ -640,6 +721,7 @@ class Engine:
         self.rpm_coupled = True
         self.powertrain = Powertrain(self.motor_rpm)
         self.swell = TipInSwell()
+        self.standstill = StandstillFade()
         self.events = fx.DriveEvents()
         self.effects = fx.Effects()
         self.built = {}
@@ -700,6 +782,8 @@ class Engine:
         pedal_n = max(0.0, min(1.0, self.pedal_position / MAX_PEDAL))
         cur = self.current
         ev_voice = cur.kind == "ev"
+        # shared virtual gears, for voices that don't run their own gearbox
+        fx_gears = s.virtual_gears and ev_voice and not getattr(cur, "own_gears", False)
 
         # drive events: from the car when it can tell us, from pedal/speed otherwise
         triggers = self.events.step(
@@ -707,7 +791,7 @@ class Engine:
             current=r.battery_current if r else None,
             signed_rpm=r.motor_rpm_signed if r else None,
             data_age=(now - r.rpm_at) if r else 1e9,
-            reverse_test=s.reverse_test, virtual_gears=s.virtual_gears and ev_voice,
+            reverse_test=s.reverse_test, virtual_gears=fx_gears,
             regen_fade=REGEN_FADE)
         if s.effects:
             for trig in triggers:
@@ -722,20 +806,28 @@ class Engine:
         self.effects.update(dt, regen=ev.regen if ev_voice else 0.0, reverse=ev.reverse,
                             enabled=s.effects and fresh,
                             speed_ratio=max(0.0, min(1.0, rpm / MAX_MOTOR_RPM)))
+        # standstill: idle on for a moment after stopping, then fade (not a hard cut)
+        moving = rpm > MUTE_BELOW_RPM or pedal_n > 0.02
+        presence = self.standstill.step(moving, dt, s.idle_hum)
         cur.set_master((ev.duck if s.effects else 1.0)
-                       * (ev.cruise_gain if s.cruise_quiet else 1.0))
+                       * (ev.cruise_gain if s.cruise_quiet else 1.0) * presence
+                       * max(0.0, min(1.0, s.volume)))
 
-        # Silent at a standstill: every voice mutes below MUTE_BELOW_RPM (~0.4 km/h)
+        tach = None
+        if fx_gears:
+            lo = fx.GEAR_SHIFT_KMH[ev.gear - 2] if ev.gear > 1 else 0.0
+            hi = fx.GEAR_SHIFT_KMH[ev.gear - 1] if ev.gear <= len(fx.GEAR_SHIFT_KMH) else lo + 40.0
+            tach = max(0.0, min(1.0, (speed - lo) / (hi - lo)))
         st = voices.State(motor_ratio=max(0.0, min(1.0, rpm / MAX_MOTOR_RPM)),
                           pedal=pedal_n, speed_kmh=speed,
                           swell=self.swell.update(self.pedal_position, dt),
-                          active=fresh and rpm > MUTE_BELOW_RPM, dt=dt,
-                          pitch_mul=ev.pitch_mul)
+                          active=fresh and presence > 0.001, dt=dt,
+                          pitch_mul=ev.pitch_mul, virtual_tach=tach)
         self.info = cur.update(st)
         self.speed, self.pedal_n, self.fresh = speed, pedal_n, fresh
 
         flags = []
-        if s.virtual_gears and ev_voice:
+        if fx_gears:
             flags.append(f"gear {ev.gear}")
         if ev.regen > 0.05:
             flags.append(f"regen {ev.regen * 100:3.0f}%")
@@ -911,6 +1003,12 @@ def run_headless(args, settings, link):
         engine.rpm_coupled = True
         engine.motor_rpm = engine.powertrain.rpm = 0.0
 
+    control = None
+    if args.bluetooth:                 # phone app control (ble_control.py, android/)
+        import ble_control
+        control = ble_control.ControlServer(engine, list(VOICES), save_settings, log=log)
+        control.start()
+
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
@@ -941,6 +1039,8 @@ def run_headless(args, settings, link):
                 next_t = time.monotonic()     # fell behind (e.g. a voice build); resync
     finally:
         log("stopping")
+        if control:
+            control.stop()
         if link:
             link.stop()
         graph.stop()
@@ -966,10 +1066,14 @@ def main():
                          "as harmonics (on by default; --no-small-speaker for headphones)")
     ap.add_argument("--effects", action=argparse.BooleanOptionalAction, default=True,
                     help="drive effects: launch, regen shimmer, reverse tone, power-on chime")
+    ap.add_argument("--idle-hum", type=float, default=0.0, metavar="LEVEL",
+                    help="at a standstill, fade to this level instead of silence (0-1, "
+                         "default 0: idle for 3 s after stopping, then fade out)")
     ap.add_argument("--cruise-quiet", action=argparse.BooleanOptionalAction, default=True,
                     help="ease the voice down 6 dB once speed holds steady (+-5 km/h) for 4 s")
-    ap.add_argument("--virtual-gears", action="store_true",
-                    help="EV voices fake gear shifts: pitch climbs per gear, drops on upshift")
+    ap.add_argument("--virtual-gears", action=argparse.BooleanOptionalAction, default=True,
+                    help="virtual gear shifts: pitch climbs per gear, drops on upshift "
+                         "(on by default; --no-virtual-gears for a smooth single gear)")
     ap.add_argument("--car", action="store_true",
                     help="drive pedal and pitch from the car over OBD (IONIQ 5 / E-GMP)")
     ap.add_argument("--port", default=None, help="OBD adapter port (default: autodetect)")
@@ -977,6 +1081,8 @@ def main():
                     help="with --car: read motor rpm every Nth cycle to calibrate the "
                          "rpm/km/h ratio (0 = never; pedal+speed then run at ~33 Hz)")
     hl = ap.add_argument_group("headless (Raspberry Pi)")
+    hl.add_argument("--bluetooth", action="store_true",
+                    help="accept control from the phone app over Bluetooth LE (ble_control.py)")
     hl.add_argument("--headless", action="store_true",
                     help="no window: chime at start-up, connect to the car in the background "
                          "and keep reconnecting; logs status lines to stdout")
@@ -1010,7 +1116,10 @@ def main():
     MAX_MOTOR_RPM = args.rpm_max or CAR_RPM_MAX
     settings = Settings(voice=find_voice(args.voice), small_speaker=args.small_speaker,
                         effects=args.effects, cruise_quiet=args.cruise_quiet,
+                        idle_hum=max(0.0, min(1.0, args.idle_hum)),
                         virtual_gears=args.virtual_gears)
+    if args.bluetooth or args.headless:   # the phone's last settings win over the defaults
+        load_settings(settings)
     link = CarLink(args.port, args.rpm_every) if args.car else None
     if args.headless:
         run_headless(args, settings, link)

@@ -1,0 +1,454 @@
+--- a/src/synthesizer.cpp
++++ b/src/synthesizer.cpp
+@@ -1,7 +1,7 @@
+ #include "../include/synthesizer.h"
+ 
+ #include "../include/utilities.h"
+-#include "../include/delta.h"
++
+ 
+ #include <cassert>
+ #include <cmath>
+@@ -304,7 +304,7 @@
+         float v_in =
+             f_p * dF_F_mix
+             + f * r_mixed * (1 - dF_F_mix);
+-        if (fpclassify(v_in) == FP_SUBNORMAL) {
++        if (std::fpclassify(v_in) == FP_SUBNORMAL) {
+             v_in = 0;
+         }
+ 
+--- a/src/simulator.cpp
++++ b/src/simulator.cpp
+@@ -74,16 +74,6 @@
+     const double timestep = getTimestep();
+     m_steps = (int)std::round((dt * m_simulationSpeed) / timestep);
+ 
+-    const double targetLatency = getSynthesizerInputLatencyTarget();
+-    if (m_synthesizer.getLatency() < targetLatency) {
+-        m_steps = static_cast<int>((m_steps + 1) * 1.1);
+-    }
+-    else if (m_synthesizer.getLatency() > targetLatency) {
+-        m_steps = static_cast<int>((m_steps - 1) * 0.9);
+-        if (m_steps < 0) {
+-            m_steps = 0;
+-        }
+-    }
+ 
+     if (m_steps > 0) {
+         for (int i = 0; i < m_engine->getIntakeCount(); ++i) {
+--- a/src/connecting_rod.cpp
++++ b/src/connecting_rod.cpp
+@@ -1,4 +1,4 @@
+-#include "..\include\connecting_rod.h"
++#include "../include/connecting_rod.h"
+ #include "../include/connecting_rod.h"
+ 
+ #include <cmath>
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -1,4 +1,4 @@
+-#include "..\include\engine.h"
++#include "../include/engine.h"
+ #include "../include/engine.h"
+ 
+ #include "../include/constants.h"
+--- a/include/gas_system.h
++++ b/include/gas_system.h
+@@ -10,9 +10,10 @@
+ class GasSystem {
+     public:
+         struct Mix {
+-            double p_fuel = 0.0;
+-            double p_inert = 1.0;
+-            double p_o2 = 0.0;
++            double p_fuel;
++            double p_inert;
++            double p_o2;
++            Mix(double fuel=0.0, double inert=1.0, double oxygen=0.0) : p_fuel(fuel), p_inert(inert), p_o2(oxygen) {}
+         };
+ 
+         struct State {
+--- a/include/constants.h
++++ b/include/constants.h
+@@ -3,10 +3,10 @@
+ 
+ namespace constants {
+ 
+-    extern constexpr double pi = 3.14159265359;
+-    extern constexpr double R = 8.31446261815324;
+-    extern constexpr double root_2 = 1.41421356237309504880168872420969807856967187537694807317667973799;
+-    extern constexpr double e = 2.71828182845904523536028747135266249775724709369995;
++    inline constexpr double pi = 3.14159265359;
++    inline constexpr double R = 8.31446261815324;
++    inline constexpr double root_2 = 1.41421356237309504880168872420969807856967187537694807317667973799;
++    inline constexpr double e = 2.71828182845904523536028747135266249775724709369995;
+ 
+ } /* namespace Constants */
+ 
+--- a/include/units.h
++++ b/include/units.h
+@@ -5,93 +5,93 @@
+ 
+ namespace units {
+     // Force
+-    extern constexpr double N = 1.0;
++    inline constexpr double N = 1.0;
+ 
+-    extern constexpr double lbf = N * 4.44822;
++    inline constexpr double lbf = N * 4.44822;
+ 
+     // Mass
+-    extern constexpr double kg = 1.0;
+-    extern constexpr double g = kg / 1000.0;
++    inline constexpr double kg = 1.0;
++    inline constexpr double g = kg / 1000.0;
+ 
+-    extern constexpr double lb = 0.45359237 * kg;
++    inline constexpr double lb = 0.45359237 * kg;
+ 
+     // Distance
+-    extern constexpr double m = 1.0;
+-    extern constexpr double cm = m / 100.0;
+-    extern constexpr double mm = m / 1000.0;
+-    extern constexpr double km = m * 1000.0;
++    inline constexpr double m = 1.0;
++    inline constexpr double cm = m / 100.0;
++    inline constexpr double mm = m / 1000.0;
++    inline constexpr double km = m * 1000.0;
+ 
+-    extern constexpr double inch = cm * 2.54;
+-    extern constexpr double foot = inch * 12.0;
+-    extern constexpr double thou = inch / 1000.0;
+-    extern constexpr double mile = m * 1609.344;
++    inline constexpr double inch = cm * 2.54;
++    inline constexpr double foot = inch * 12.0;
++    inline constexpr double thou = inch / 1000.0;
++    inline constexpr double mile = m * 1609.344;
+ 
+     // Time
+-    extern constexpr double sec = 1.0;
+-    extern constexpr double minute = 60 * sec;
+-    extern constexpr double hour = 60 * minute;
++    inline constexpr double sec = 1.0;
++    inline constexpr double minute = 60 * sec;
++    inline constexpr double hour = 60 * minute;
+ 
+     // Torque
+-    extern constexpr double Nm = N * m;
+-    extern constexpr double ft_lb = foot * lbf;
++    inline constexpr double Nm = N * m;
++    inline constexpr double ft_lb = foot * lbf;
+ 
+     // Power
+-    extern constexpr double W = Nm / sec;
+-    extern constexpr double kW = W * 1000.0;
+-    extern constexpr double hp = 745.699872 * W;
++    inline constexpr double W = Nm / sec;
++    inline constexpr double kW = W * 1000.0;
++    inline constexpr double hp = 745.699872 * W;
+ 
+     // Volume
+-    extern constexpr double m3 = 1.0;
+-    extern constexpr double cc = cm * cm * cm;
+-    extern constexpr double mL = cc;
+-    extern constexpr double L = mL * 1000.0;
+-    extern constexpr double cubic_feet = foot * foot * foot;
+-    extern constexpr double cubic_inches = inch * inch * inch;
+-    extern constexpr double gal = 3.785411784 * L;
++    inline constexpr double m3 = 1.0;
++    inline constexpr double cc = cm * cm * cm;
++    inline constexpr double mL = cc;
++    inline constexpr double L = mL * 1000.0;
++    inline constexpr double cubic_feet = foot * foot * foot;
++    inline constexpr double cubic_inches = inch * inch * inch;
++    inline constexpr double gal = 3.785411784 * L;
+ 
+     // Molecular
+-    extern constexpr double mol = 1.0;
+-    extern constexpr double kmol = mol / 1000.0;
+-    extern constexpr double mmol = mol / 1000000.0;
+-    extern constexpr double lbmol = mol * 453.59237;
++    inline constexpr double mol = 1.0;
++    inline constexpr double kmol = mol / 1000.0;
++    inline constexpr double mmol = mol / 1000000.0;
++    inline constexpr double lbmol = mol * 453.59237;
+ 
+     // Flow-rate (moles)
+-    extern constexpr double mol_per_sec = mol / sec;
+-    extern constexpr double scfm = 0.002641 * lbmol / minute;
++    inline constexpr double mol_per_sec = mol / sec;
++    inline constexpr double scfm = 0.002641 * lbmol / minute;
+ 
+     // Area
+-    extern constexpr double m2 = 1.0;
+-    extern constexpr double cm2 = cm * cm;
++    inline constexpr double m2 = 1.0;
++    inline constexpr double cm2 = cm * cm;
+ 
+     // Pressure
+-    extern constexpr double Pa = 1.0;
+-    extern constexpr double kPa = Pa * 1000.0;
+-    extern constexpr double MPa = Pa * 1000000.0;
+-    extern constexpr double atm = 101.325 * kPa;
++    inline constexpr double Pa = 1.0;
++    inline constexpr double kPa = Pa * 1000.0;
++    inline constexpr double MPa = Pa * 1000000.0;
++    inline constexpr double atm = 101.325 * kPa;
+ 
+-    extern constexpr double mbar = Pa * 100.0;
+-    extern constexpr double bar = mbar * 1000.0;
++    inline constexpr double mbar = Pa * 100.0;
++    inline constexpr double bar = mbar * 1000.0;
+ 
+-    extern constexpr double psi = lbf / (inch * inch);
+-    extern constexpr double psig = psi;
+-    extern constexpr double inHg = Pa * 3386.3886666666713;
+-    extern constexpr double inH2O = inHg * 0.0734824;
++    inline constexpr double psi = lbf / (inch * inch);
++    inline constexpr double psig = psi;
++    inline constexpr double inHg = Pa * 3386.3886666666713;
++    inline constexpr double inH2O = inHg * 0.0734824;
+ 
+     // Temperature
+-    extern constexpr double K = 1.0;
+-    extern constexpr double K0 = 273.15;
+-    extern constexpr double C = K;
+-    extern constexpr double F = (5.0 / 9.0) * K;
+-    extern constexpr double F0 = -459.67;
++    inline constexpr double K = 1.0;
++    inline constexpr double K0 = 273.15;
++    inline constexpr double C = K;
++    inline constexpr double F = (5.0 / 9.0) * K;
++    inline constexpr double F0 = -459.67;
+ 
+     // Energy
+-    extern constexpr double J = 1.0;
+-    extern constexpr double kJ = J * 1000;
+-    extern constexpr double MJ = J * 1000000;
++    inline constexpr double J = 1.0;
++    inline constexpr double kJ = J * 1000;
++    inline constexpr double MJ = J * 1000000;
+ 
+     // Angles
+-    extern constexpr double rad = 1.0;
+-    extern constexpr double deg = rad * (constants::pi / 180);
++    inline constexpr double rad = 1.0;
++    inline constexpr double deg = rad * (constants::pi / 180);
+ 
+     // Conversions
+     inline constexpr double distance(double v, double unit) {
+--- a/dependencies/submodules/piranha/include/path.h
++++ b/dependencies/submodules/piranha/include/path.h
+@@ -3,17 +3,12 @@
+ 
+ #include <string>
+ 
+-// Forward Boost declaration
+-namespace boost {
+-    namespace filesystem {
+-        class path;
+-    } /* namespace filesystem */
+-} /* namespace boost */
++#include <filesystem>
+ 
+ namespace piranha {
+ 
+     class Path {        
+-    protected: Path(const boost::filesystem::path &path);
++    protected: Path(const std::filesystem::path &path);
+     public:
+         Path(const std::string &path);
+         Path(const char *path);
+@@ -38,10 +33,10 @@
+         bool exists() const;
+ 
+     protected:
+-        boost::filesystem::path *m_path;
++        std::filesystem::path *m_path;
+ 
+     protected:
+-        const boost::filesystem::path &getBoostPath() const { return *m_path; }
++        const std::filesystem::path &getBoostPath() const { return *m_path; }
+     };
+ 
+ } /* namespace piranha */
+--- a/dependencies/submodules/piranha/src/path.cpp
++++ b/dependencies/submodules/piranha/src/path.cpp
+@@ -2,7 +2,7 @@
+ 
+ #include "../include/memory_tracker.h"
+ 
+-#include <boost/filesystem.hpp>
++#include <filesystem>
+ 
+ piranha::Path::Path(const std::string &path) {
+     m_path = nullptr;
+@@ -15,7 +15,7 @@
+ }
+ 
+ piranha::Path::Path(const Path &path) {
+-    m_path = TRACK(new boost::filesystem::path);
++    m_path = TRACK(new std::filesystem::path);
+     *m_path = path.getBoostPath();
+ }
+ 
+@@ -23,8 +23,8 @@
+     m_path = nullptr;
+ }
+ 
+-piranha::Path::Path(const boost::filesystem::path &path) {
+-    m_path = TRACK(new boost::filesystem::path);
++piranha::Path::Path(const std::filesystem::path &path) {
++    m_path = TRACK(new std::filesystem::path);
+     *m_path = path;
+ }
+ 
+@@ -39,11 +39,11 @@
+ void piranha::Path::setPath(const std::string &path) {
+     if (m_path != nullptr) delete FTRACK(m_path);
+ 
+-    m_path = TRACK(new boost::filesystem::path(path));
++    m_path = TRACK(new std::filesystem::path(path));
+ }
+ 
+ bool piranha::Path::operator==(const Path &path) const {
+-    return boost::filesystem::equivalent(this->getBoostPath(), path.getBoostPath());
++    return std::filesystem::equivalent(this->getBoostPath(), path.getBoostPath());
+ }
+ 
+ piranha::Path piranha::Path::append(const Path &path) const {
+@@ -51,14 +51,14 @@
+ }
+ 
+ void piranha::Path::getParentPath(Path *path) const {
+-    path->m_path = TRACK(new boost::filesystem::path);
++    path->m_path = TRACK(new std::filesystem::path);
+     *path->m_path = m_path->parent_path();
+ }
+ 
+ const piranha::Path &piranha::Path::operator=(const Path &b) {
+     if (m_path != nullptr) delete FTRACK(m_path);
+ 
+-    m_path = TRACK(new boost::filesystem::path);
++    m_path = TRACK(new std::filesystem::path);
+     *m_path = b.getBoostPath();
+ 
+     return *this;
+@@ -73,9 +73,9 @@
+ }
+ 
+ bool piranha::Path::isAbsolute() const {
+-    return m_path->is_complete();
++    return m_path->is_absolute();
+ }
+ 
+ bool piranha::Path::exists() const {
+-    return boost::filesystem::exists(*m_path);
++    return std::filesystem::exists(*m_path);
+ }
+--- a/dependencies/submodules/piranha/CMakeLists.txt
++++ b/dependencies/submodules/piranha/CMakeLists.txt
+@@ -48,10 +48,10 @@
+ include_directories(dependencies/libraries/flex/include)
+ include_directories(include)
+ 
+-set(Boost_USE_STATIC_LIBS ON)
++set(Boost_USE_STATIC_LIBS OFF)
+ set(Boost_USE_MULTITHREADED ON)
+ set(Boost_USE_STATIC_RUNTIME OFF)
+-find_package(Boost 1.40 COMPONENTS filesystem REQUIRED)
++
+ 
+ add_library(piranha STATIC
+     # Source files
+@@ -166,7 +166,7 @@
+     ${FLEX_lexer_OUTPUTS}
+ )
+ 
+-target_link_libraries(piranha Boost::filesystem)
++
+ 
+ add_executable(piranha_reference_compiler
+     # Source files
+--- a/dependencies/submodules/piranha/include/language_rules.h
++++ b/dependencies/submodules/piranha/include/language_rules.h
+@@ -1,3 +1,4 @@
++#include <type_traits>
+ #ifndef PIRANHA_LANGUAGE_RULES_H
+ #define PIRANHA_LANGUAGE_RULES_H
+ 
+@@ -125,11 +126,13 @@
+         const ChannelType *resolveChannelType(const std::string &builtinName) const;
+ 
+         template <typename NativeType>
+-        std::string getLiteralBuiltinName() const { return ""; }
+-        template<> std::string getLiteralBuiltinName<piranha::native_bool>() const { return *m_literalRules.lookup(LiteralType::Boolean); }
+-        template<> std::string getLiteralBuiltinName<piranha::native_string>() const  { return *m_literalRules.lookup(LiteralType::String); }
+-        template<> std::string getLiteralBuiltinName<piranha::native_int>() const  { return *m_literalRules.lookup(LiteralType::Integer); }
+-        template<> std::string getLiteralBuiltinName<piranha::native_float>() const { return *m_literalRules.lookup(LiteralType::Float); }
++        std::string getLiteralBuiltinName() const {
++            if constexpr (std::is_same_v<NativeType, piranha::native_bool>) return *m_literalRules.lookup(LiteralType::Boolean);
++            else if constexpr (std::is_same_v<NativeType, piranha::native_string>) return *m_literalRules.lookup(LiteralType::String);
++            else if constexpr (std::is_same_v<NativeType, piranha::native_int>) return *m_literalRules.lookup(LiteralType::Integer);
++            else if constexpr (std::is_same_v<NativeType, piranha::native_float>) return *m_literalRules.lookup(LiteralType::Float);
++            else return "";
++        }
+ 
+         bool checkConversion(const ChannelType *input, const ChannelType *output) const;
+         Node *generateConversion(const ChannelType *input, const ChannelType *output);
+--- a/dependencies/submodules/piranha/include/ir_value_constant.h
++++ b/dependencies/submodules/piranha/include/ir_value_constant.h
+@@ -47,8 +47,7 @@
+         template <typename _T>
+         const _T validateData(const _T &data, bool recordErrors = false) { return data; }
+ 
+-        template <>
+-        const piranha::native_string validateData<piranha::native_string>(const piranha::native_string &data, bool recordErrors) {
++        const piranha::native_string validateData(const piranha::native_string &data, bool recordErrors) {
+             piranha::native_string res;
+             piranha::native_string::const_iterator it = data.begin();
+             while (it != data.end()) {
+--- a/dependencies/submodules/piranha/include/memory_management.h
++++ b/dependencies/submodules/piranha/include/memory_management.h
+@@ -5,13 +5,13 @@
+ 
+ namespace piranha {
+ 
+-    typedef unsigned __int64 mem_size;
++    typedef unsigned long long mem_size;
+ 
+     constexpr mem_size KB = 1000;
+     constexpr mem_size MB = 1000 * KB;
+     constexpr mem_size GB = 1000 * MB;
+ 
+-#define CHECK_ALIGNMENT(pointer, required) assert((((unsigned __int64)((char *)(pointer))) % (required)) == 0)
++#define CHECK_ALIGNMENT(pointer, required) assert((((unsigned long long)((char *)(pointer))) % (required)) == 0)
+ 
+ } /* namespace piranha */
+ 
+--- a/scripting/include/channel_types.h
++++ b/scripting/include/channel_types.h
+@@ -35,7 +35,7 @@
+ 
+ #define ASSIGN_CHANNEL_TYPE(type, channel) \
+     class type; \
+-    template <> extern inline const piranha::ChannelType *LookupChannelType<type>() { \
++    template <> inline const piranha::ChannelType *LookupChannelType<type>() { \
+         return &ObjectChannel::channel; \
+     }
+ 
+--- a/scripting/include/object_reference_node.h
++++ b/scripting/include/object_reference_node.h
+@@ -18,9 +18,9 @@
+             /* void */
+         }
+ 
+-        template <typename Type>
++        template <typename OverrideType>
+         void overrideType() {
+-            m_output.overrideType(LookupChannelType<Type>());
++            m_output.overrideType(LookupChannelType<OverrideType>());
+         }
+ 
+     protected:

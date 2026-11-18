@@ -1,0 +1,81 @@
+--- a/voices.py
++++ b/voices.py
+@@
+-class Slipstream(Voice):
++class HypercarDrive(Voice):
++    """Experimental EV: motor orders exciting fixed structural resonances.
++
++    No musical chords or repetitive tremolo. The body resonances stay fixed
++    as the motor orders move through them; throttle changes excitation.
++    """
++    name = "Hypercar Drive"
++    LEVEL = 1.0
++    BODY_LEVEL = 0.26
++    TEXTURE_LEVEL = 0.12
++    WHINE_LEVEL = 0.075
++
++    def build(self):
++        t = {key: _target(value) for key, value in {
++            "order_hz": 90.0, "load": 0.0, "texture": 0.0,
++            "presence": 0.0, "air": 0.0, "gain": 0.0,
++        }.items()}
++        f = Smooth(t["order_hz"], 0.9995)
++        load = Smooth(t["load"], 0.999)
++        texture = Smooth(t["texture"], 0.999)
++        presence = Smooth(t["presence"], 0.999)
++
++        # Quiet motor orders, deliberately avoiding a loud sawtooth fundamental.
++        orders = (SineOscillator(f) * 0.45
++                  + SineOscillator(f * 2.02) * 0.24
++                  + SineOscillator(f * 3.97) * 0.13)
++        orders *= 0.065 + 0.09 * load
++
++        # Structural modes are fixed in Hz: motor pitch passes through them.
++        # Parallel noise-excited bandpass filters approximate a resonator bank.
++        exc = PinkNoise()
++        modes = None
++        for hz, strength, q in ((285.0, 1.0, 0.72),
++                                (465.0, 0.72, 0.79),
++                                (735.0, 0.50, 0.83),
++                                (1120.0, 0.30, 0.86)):
++            mode = SVFilter(exc, "band_pass", cutoff=hz, resonance=q) * strength
++            modes = mode if modes is None else modes + mode
++        body = modes * self.BODY_LEVEL * (0.18 + 0.82 * load)
++
++        # Separate, broad mechanical texture responds primarily to torque.
++        grit = SVFilter(WhiteNoise(), "band_pass", cutoff=900.0,
++                        resonance=0.38)
++        grit = SVFilter(grit, "low_pass", cutoff=2600.0, resonance=0.0)
++        grit *= self.TEXTURE_LEVEL * texture
++
++        # The soaring top end remains quiet until the motor is spinning quickly.
++        high = (SineOscillator(f * 5.13) * 0.7
++                + SineOscillator(f * 7.08) * 0.3)
++        high *= self.WHINE_LEVEL * presence
++
++        air = SVFilter(PinkNoise(), "high_pass", cutoff=500.0,
++                       resonance=0.0) * Smooth(t["air"], 0.999) * 0.018
++        mix = orders + body + grit + high + air
++        mix = SVFilter(mix, "low_pass", cutoff=3800.0, resonance=0.0)
++        return mix * Smooth(t["gain"], 0.999), t
++
++    def update(self, st):
++        r = max(0.0, min(1.0, st.motor_ratio))
++        p = max(0.0, min(1.0, st.pedal))
++        swell = max(0.0, min(1.0, st.swell))
++        # The motor-order floor is a deliberate sound-design choice at idle.
++        self.targets["order_hz"].set_value((75.0 + 185.0 * r) * st.pitch_mul)
++        self.targets["load"].set_value(min(1.0, 0.15 + 0.8 * p + 0.35 * swell))
++        self.targets["texture"].set_value(min(1.0, 0.05 + 0.85 * p ** 1.5 + 0.4 * swell))
++        self.targets["presence"].set_value(min(1.0, r ** 1.6 * (0.2 + 0.8 * p)))
++        self.targets["air"].set_value(r * r)
++        self.targets["gain"].set_value(_ev_gain(st, self.LEVEL))
++        return "loaded" if p > 0.5 else "coasting"
++
++
++class Slipstream(Voice):
+--- a/main.py
++++ b/main.py
+@@
+-VOICES = {v.name: v for v in (voices.Slipstream, voices.PrecisionDrive, voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,
++VOICES = {v.name: v for v in (voices.HypercarDrive, voices.Slipstream, voices.PrecisionDrive, voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,

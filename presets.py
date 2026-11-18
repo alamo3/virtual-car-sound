@@ -46,7 +46,13 @@ def voice_class(factory):
     if isinstance(factory, type):
         return factory
     if isinstance(factory, functools.partial):
-        return voices.RecordingVoice
+        if isinstance(factory.func, type):     # e.g. a resynth profile: the class itself
+            return factory.func
+        try:                                   # a mapped recording: which kind of voice?
+            d = json.loads(Path(factory.args[0]).read_text())
+            return voices.SampledRecording if d.get("samples") else voices.RecordingVoice
+        except (OSError, ValueError, IndexError):
+            return voices.RecordingVoice
     return None
 
 
