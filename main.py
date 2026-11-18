@@ -478,9 +478,9 @@ class HumVoice(voices.Voice):
         return ""
 
 
-VOICES = {v.name: v for v in (voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,
+VOICES = {v.name: v for v in (voices.Slipstream, voices.PrecisionDrive, voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,
                               voices.CinematicDrive, voices.ActionPulse, voices.TrailerBrass,
-                              voices.StringsChoir, voices.Cathedral, voices.GrandTouring, voices.InverterWhine, voices.Maglev,
+                              voices.StringsChoir, voices.Cathedral, voices.GrandTouring, voices.Dreadnought, voices.JetTurbine, voices.InverterWhine, voices.Maglev,
                               voices.WarpCore, voices.Theremin, voices.HoverTurbine,
                               JetsonsLowVoice,
                               JetsonsVoice, HumVoice,
@@ -488,6 +488,8 @@ VOICES = {v.name: v for v in (voices.RecordingI3, voices.JetsonsI3, voices.DeepD
 # every recording mapped with mapper.py (maps/*.json) becomes a voice too
 for _name, _path in voices.RecordingVoice.saved_maps():
     VOICES[_name] = functools.partial(voices.RecordingVoice.from_map, _path)
+import presets as _presets
+_presets.register(VOICES)          # sound-lab presets (presets/*.json) become voices too
 DEFAULT_VOICE = "Jetsons i3 (recording)"
 
 

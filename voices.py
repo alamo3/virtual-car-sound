@@ -71,7 +71,7 @@ TRIM_DB: dict[str, float] = {
     'Jetsons i3': -5.7,
     'Deep Drone': +11.8,
     'Cinematic Chord': +6.2,
-    'Cinematic Drive': +2.4,
+    'Cinematic Drive': +3.6,
     'Inverter Whine': +8.1,
     'Maglev': +8.9,
     'Warp Core': +12.0,
@@ -86,7 +86,9 @@ TRIM_DB: dict[str, float] = {
     'Trailer Brass': +6.6,
     'Strings & Choir': +2.9,
     'Cathedral': +3.6,
-    'Grand Touring': +7.0,
+    'Grand Touring': +8.0,
+    'Dreadnought': +9.0,
+    'Jet Turbine': +9.8,
 }
 
 
@@ -108,7 +110,8 @@ class Voice:
 
     def __init__(self):
         out, self.targets = self.build()
-        trim = 10.0 ** (TRIM_DB.get(self.name, 0.0) / 20.0)
+        # presets (see presets.py) keep the loudness trim of the voice they are based on
+        trim = 10.0 ** (TRIM_DB.get(getattr(self, "trim_name", None) or self.name, 0.0) / 20.0)
         self.targets["small"] = Constant(1.0 if SMALL_SPEAKER else 0.0)
         self.targets["master"] = Constant(1.0)
         self.output = output_stage(out * trim, self.targets["small"], self.targets["master"])
@@ -131,6 +134,95 @@ class Voice:
 # ---------------------------------------------------------------------------------------
 # Futuristic EV voices
 # ---------------------------------------------------------------------------------------
+
+class Slipstream(Voice):
+    """Electric performance sound with a slowly responding, load-driven rotor.
+
+    A low motor note anchors a higher, slightly inharmonic rotor. The rotor spools up
+    with pedal and settles more slowly on release, adding motion independent of speed.
+    """
+    name = "Slipstream"
+
+    def __init__(self):
+        self.rotor = 0.0
+        super().__init__()
+
+    def build(self):
+        t = {key: _target(value) for key, value in {
+            "base": 105.0, "rotor": 360.0, "load": 0.0, "surge": 0.0, "gain": 0.0,
+        }.items()}
+        base = Smooth(t["base"], 0.9995)
+        rotor = Smooth(t["rotor"], 0.9995)
+        load = Smooth(t["load"], 0.999)
+        surge = Smooth(t["surge"], 0.999)
+
+        # The 1.5-order component gives the motor a mechanical edge without adding
+        # a major/minor chord. The fixed resonator gives the sweep a changing color.
+        motor = TriangleOscillator(base) * 0.12 + SawOscillator(base * 1.5) * 0.055
+        motor = SVFilter(motor, "low_pass", cutoff=850.0, resonance=0.25)
+        rotor_tone = (SineOscillator(rotor) * 0.050
+                      + SineOscillator(rotor * 2.03) * 0.014)
+        rotor_tone *= 0.45 + 0.65 * load + 0.35 * surge
+        # A soft saturating load layer changes timbre at tip-in, then recedes.
+        growl = SVFilter(Tanh(SawOscillator(base * 0.75) * 1.5), "low_pass",
+                         cutoff=720.0, resonance=0.15)
+        growl *= 0.025 + 0.055 * load + 0.04 * surge
+        return (motor + rotor_tone + growl) * Smooth(t["gain"], 0.999), t
+
+    def update(self, st):
+        r = max(0.0, min(1.0, st.motor_ratio))
+        p = max(0.0, min(1.0, st.pedal))
+        target = min(1.0, 0.35 * r + 0.65 * p)
+        tau = 0.5 if target > self.rotor else 1.8
+        self.rotor += (target - self.rotor) * (1.0 - math.exp(-max(0.0, st.dt) / tau))
+        self.targets["base"].set_value((105.0 + 100.0 * r) * st.pitch_mul)
+        self.targets["rotor"].set_value((350.0 + 300.0 * r + 230.0 * self.rotor) * st.pitch_mul)
+        self.targets["load"].set_value(p)
+        self.targets["surge"].set_value(st.swell)
+        self.targets["gain"].set_value((1.4 + 0.3 * p) if st.active else 0.0)
+        return "spooling" if p > 0.5 else "cruise"
+
+
+class PrecisionDrive(Voice):
+    """A restrained electric drive sound for sustained use.
+
+    A soft body and a quiet mechanical overtone respond smoothly to speed and pedal.
+    Lift-off is inferred from low pedal, not a measurement of regen current.
+    """
+    name = "Precision Drive"
+
+    def build(self):
+        t = {key: _target(value) for key, value in {
+            "body": 130.0, "mesh": 500.0,
+            "load": 0.0, "coast": 0.0, "attack": 0.0, "gain": 0.0,
+        }.items()}
+        body_f = Smooth(t["body"], 0.9995)
+        mesh_f = Smooth(t["mesh"], 0.9995)
+        load = Smooth(t["load"], 0.999)
+        coast = Smooth(t["coast"], 0.999)
+        attack = Smooth(t["attack"], 0.9995)
+
+        body = SineOscillator(body_f) * 0.09 + TriangleOscillator(body_f * 2.0) * 0.035
+        # A resonant, slightly irregular harmonic body becomes more present on load.
+        # Its fixed resonance changes the tone as the harmonics pass through it.
+        motor = SawOscillator(body_f) * 0.5 + TriangleOscillator(body_f * 1.5) * 0.25
+        motor = SVFilter(motor, "low_pass", cutoff=620.0, resonance=0.45)
+        motor *= 0.045 + 0.07 * load + 0.015 * attack
+        mesh = SineOscillator(mesh_f) * (0.008 + 0.018 * load)
+        overrun = SineOscillator(mesh_f * 1.48) * coast * 0.006
+        return (body + motor + mesh + overrun) * Smooth(t["gain"], 0.999), t
+
+    def update(self, st):
+        r = max(0.0, min(1.0, st.motor_ratio))
+        p = max(0.0, min(1.0, st.pedal))
+        self.targets["body"].set_value((125.0 + 95.0 * r) * st.pitch_mul)
+        self.targets["mesh"].set_value((390.0 + 440.0 * r) * st.pitch_mul)
+        self.targets["load"].set_value(p)
+        self.targets["coast"].set_value(max(0.0, 1.0 - p / 0.3) * min(1.0, r / 0.08))
+        self.targets["attack"].set_value(st.swell)
+        self.targets["gain"].set_value((1.65 + 0.3 * p) if st.active else 0.0)
+        return "coast" if p < 0.15 else "drive"
+
 
 class DeepDrone(Voice):
     """Detuned saw pad with a sub-octave: a big, low sci-fi hum. 45 Hz idle -> 110 Hz."""
@@ -245,8 +337,8 @@ class CinematicDrive(Voice):
     CHORD = (1.0, 1.5, 2.0, 2.5)                 # root, fifth, octave, major tenth
     CHORD_LEVEL = (1.0, 0.7, 0.55, 0.35)
     RISE_PARTIALS = 6
-    RISE_BASE = 55.0                             # lowest Shepard partial, Hz
-    RISE_CENTRE = 330.0                          # loudest point of the bell, Hz
+    RISE_BASE = 41.0                             # lowest Shepard partial, Hz
+                                                 # (window peaks 3 octaves up: 330 Hz)
     RISE_KMH = 25.0                              # km/h per full octave of climb
     LEVEL = 0.8
 
@@ -274,7 +366,7 @@ class CinematicDrive(Voice):
                    + TriangleOscillator(Smooth(t[f"rf{k}"], 0.995)) * 0.2)
             osc = osc * Smooth(t[f"ra{k}"], 0.999)
             rise = osc if rise is None else rise + osc
-        rise = rise * Smooth(t["rise"], 0.999)
+        rise = SVFilter(rise, "low_pass", cutoff=800.0, resonance=0.0) * Smooth(t["rise"], 0.999)
 
         brass_src = SawOscillator(root) + SawOscillator(root * 1.5 * 1.002) * 0.7
         brass = SVFilter(brass_src, "band_pass", cutoff=Smooth(t["brass_f"], 0.999),
@@ -304,12 +396,13 @@ class CinematicDrive(Voice):
 
         # Shepard climb: phase advances with speed; levels from a fixed bell in log-freq,
         # so each partial fades in at the bottom and out at the top as it slides up
-        phase = (st.speed_kmh / self.RISE_KMH) % 1.0
-        centre = math.log2(self.RISE_CENTRE / self.RISE_BASE)
-        for k in range(self.RISE_PARTIALS):
-            pos = k + phase
+        # each partial wraps on its own, top -> bottom, where the window is silent
+        # (wrapping all at once swept every audible partial down an octave: a chirp)
+        n, climb = self.RISE_PARTIALS, st.speed_kmh / self.RISE_KMH
+        for k in range(n):
+            pos = (k + climb) % n
             self.targets[f"rf{k}"].set_value(self.RISE_BASE * 2 ** pos * st.pitch_mul)
-            self.targets[f"ra{k}"].set_value(math.exp(-0.5 * ((pos - centre) / 1.1) ** 2))
+            self.targets[f"ra{k}"].set_value(math.sin(math.pi * pos / n) ** 4)
         self.targets["rise"].set_value(0.25 + 0.75 * min(1.0, r * 3) + 0.4 * st.swell)
 
         self.targets["gain"].set_value(_ev_gain(st, self.LEVEL))
@@ -707,7 +800,7 @@ class GrandTouring(Voice):
     )
     STRETCH = 0.0015          # high orders run slightly sharp: a faint metallic shimmer
     ROUGH_HZ = (40.0, 65.0)   # roughness flutter rate, light -> full load
-    SHEP_PARTIALS, SHEP_BASE, SHEP_CENTRE, SHEP_KMH = 6, 70.0, 420.0, 30.0
+    SHEP_PARTIALS, SHEP_BASE, SHEP_KMH = 6, 50.0, 30.0   # window peaks at 400 Hz
 
     def __init__(self):
         self.load = 0.0
@@ -735,11 +828,15 @@ class GrandTouring(Voice):
         rough = Smooth(t["rough"], 0.999)
         base = (low + high * drift * ((flutter - 1.0) * rough + 1.0)) * 0.22
 
-        # torque: half-order growl, rough and gritty under load
-        src = SawOscillator(f * 0.5) + SawOscillator(f * 1.5 * 1.003) * 0.6 \
-            + SawOscillator(f * 1.002) * 0.4
-        growl = SVFilter(src, "low_pass", cutoff=f * 7.0, resonance=0.25)
-        growl = Tanh(growl * Smooth(t["grit"], 0.999)) * (flutter * 0.65 + 0.35)
+        # torque: half-order growl, rough and gritty under load. Distortion comes BEFORE
+        # the low-pass: a distorted waveform's edges are sharp, and an unfiltered 30 Hz
+        # sub would tick 30 times a second -- heard as crackle.
+        src = TriangleOscillator(f * 0.5) + SawOscillator(f * 1.5 * 1.003) * 0.5 \
+            + TriangleOscillator(f * 1.002) * 0.5
+        src = SVFilter(src, "low_pass", cutoff=f * 6.0, resonance=0.0)
+        growl = SVFilter(Tanh(src * Smooth(t["grit"], 0.999)), "low_pass",
+                         cutoff=f * 7.0, resonance=0.2)
+        growl = growl * (flutter * 0.65 + 0.35)
         torque = growl * 0.4 * Smooth(t["torque"], 0.9993)
 
         # shepard: partial frequencies and levels set per tick (see update)
@@ -749,7 +846,9 @@ class GrandTouring(Voice):
             t[f"sa{k}"] = _target(0.0)
             p = SineOscillator(Smooth(t[f"sf{k}"], 0.995)) * Smooth(t[f"sa{k}"], 0.999)
             shep = p if shep is None else shep + p
-        shep = shep * 0.07 * Smooth(t["shep"], 0.999)
+        # the top partials pass through 1-2 kHz on their way round: keep them out of earshot
+        shep = SVFilter(shep, "low_pass", cutoff=900.0, resonance=0.0) * 0.07 \
+            * Smooth(t["shep"], 0.999)
 
         out = _hall(base + torque + shep, wet=0.15)
         return Tanh(out * Smooth(t["gain"], 0.999)), t
@@ -778,17 +877,209 @@ class GrandTouring(Voice):
         tg["grit"].set_value(1.0 + 2.5 * heavy)
         tg["rough"].set_value(0.6 * heavy)
 
-        phase = (st.speed_kmh / self.SHEP_KMH) % 1.0
-        centre = math.log2(self.SHEP_CENTRE / self.SHEP_BASE)
-        for k in range(self.SHEP_PARTIALS):
-            pos = k + phase
+        # each partial climbs on its own and wraps from the top back to the bottom where the
+        # window is silent; wrapping them all at once would sweep every audible partial
+        # down an octave in a few ms -- a chirp each time
+        n, climb = self.SHEP_PARTIALS, st.speed_kmh / self.SHEP_KMH
+        for k in range(n):
+            pos = (k + climb) % n
             tg[f"sf{k}"].set_value(self.SHEP_BASE * 2 ** pos)
-            tg[f"sa{k}"].set_value(math.exp(-0.5 * ((pos - centre) / 1.0) ** 2))
+            tg[f"sa{k}"].set_value(math.sin(math.pi * pos / n) ** 4)   # narrow: no high whine
         tg["shep"].set_value(min(1.0, st.speed_kmh / 15.0) * (0.6 + 0.4 * load))
 
         tg["gain"].set_value(_ev_gain(st, self.LEVEL))
         band = ("cruise", "light", "firm", "full")[min(3, int(load * 4))]
         return f"load {load * 100:3.0f}% ({band})"
+
+
+class Dreadnought(Voice):
+    """Dark sci-fi machine: sound design, not music -- a huge craft's drive, no chords.
+
+      hull hum    a low hum with inharmonic partials (1, 2.03, 3.17, 4.41, 5.93): metal,
+                  not an instrument. Each partial wanders in level on its own, slowly and
+                  irregularly, like big machinery. 34 -> 85 Hz with speed.
+      resonance   noise ringing two comb resonators tuned to clashing, non-harmonic
+                  pitches -- the hull itself singing. Load tightens their feedback, so
+                  pressing makes the metal ring harder and longer.
+      servo       a resonant whine that follows ACCELERATION, not speed: rising while
+                  you speed up, sagging as you slow, silent when steady.
+      surge       a throb under load (6 -> 11 Hz pulsing), the drive straining.
+      air         dark air handling that grows with speed.
+    """
+    name = "Dreadnought"
+    F_IDLE, F_TOP = 34.0, 85.0
+    LEVEL = 1.6
+    HUM = ((1.0, 0.5), (2.03, 0.7), (3.17, 0.5), (4.41, 0.4), (5.93, 0.3))
+    RES_RATIOS = (2.71, 4.13)            # comb pitches relative to the hum: clashing metal
+
+    def __init__(self):
+        self._prev_speed = None
+        self.accel = 0.0
+        self.load = 0.0
+        super().__init__()
+
+    def build(self):
+        t = {"freq": _target(self.F_IDLE), "hum": _target(1.0), "res_fb": _target(0.85),
+             "res": _target(0.3),
+             "servo_f": _target(300.0), "servo": _target(0.0), "surge": _target(0.0),
+             "throb": _target(6.0), "air": _target(0.05), "air_f": _target(300.0),
+             "gain": _target(0.0)}
+        f = Smooth(t["freq"], 0.9995)
+
+        hum = None
+        for i, (ratio, amp) in enumerate(self.HUM):
+            # irregular, slow level wander: a new random target every ~0.3-0.7 s, glided
+            wander = Smooth(RandomUniform(0.45, 1.0, clock=Impulse(1.4 + 0.53 * i)), 0.99995)
+            p = SineOscillator(f * ratio) * (amp * wander)
+            hum = p if hum is None else hum + p
+        hum = hum * 0.3 * Smooth(t["hum"], 0.999)
+
+        exc = SVFilter(WhiteNoise(), "band_pass", cutoff=f * 10.0, resonance=0.2) * 0.17
+        fb = Smooth(t["res_fb"], 0.999)
+        res = None
+        for ratio in self.RES_RATIOS:
+            c = CombDelay(exc, delay_time=1.0 / (f * ratio), feedback=fb, max_delay_time=0.05)
+            res = c if res is None else res + c
+        res = SVFilter(SVFilter(res, "low_pass", cutoff=1800.0, resonance=0.0),
+                       "low_pass", cutoff=1800.0, resonance=0.0) * Smooth(t["res"], 0.999)
+
+        servo_f = Smooth(t["servo_f"], 0.9995)
+        servo = SVFilter(SawOscillator(servo_f) + SawOscillator(servo_f * 1.007), "band_pass",
+                         cutoff=servo_f * 2.0, resonance=0.6)
+        servo = SVFilter(servo, "low_pass", cutoff=1500.0, resonance=0.0) \
+            * 0.05 * Smooth(t["servo"], 0.999)
+
+        throb = SineLFO(Smooth(t["throb"], 0.999), 0.2, 1.0)
+        # pitched where it is heard (2nd/3rd harmonic), not as sub that only eats headroom
+        surge = (TriangleOscillator(f * 2.0) + SineOscillator(f * 3.0) * 0.5) * throb \
+            * 0.3 * Smooth(t["surge"], 0.9995)
+
+        air = SVFilter(PinkNoise(), "low_pass", cutoff=Smooth(t["air_f"], 0.999),
+                       resonance=0.1) * 18.0 * Smooth(t["air"], 0.999)
+
+        # a dark machine: nothing above ~3 kHz, so no hiss or edge at full load
+        mix = SVFilter(hum + res + servo + surge + air, "low_pass", cutoff=3000.0, resonance=0.0)
+        verb = FeedbackDelayNetwork(mix, num_delays=8, feedback=0.88, damping=0.7, wet=1.0,
+                                    dry=0.0, max_delay_time=0.25)
+        return Tanh((mix + verb * 0.25) * Smooth(t["gain"], 0.999)), t
+
+    def update(self, st):
+        r, tg = st.motor_ratio, self.targets
+        f = self.F_IDLE * (self.F_TOP / self.F_IDLE) ** (r ** 0.85) * st.pitch_mul
+        tg["freq"].set_value(f)
+
+        # acceleration in km/h per s, smoothed; the servo answers to this
+        if self._prev_speed is not None and st.dt > 0:
+            a = (st.speed_kmh - self._prev_speed) / st.dt
+            self.accel += (a - self.accel) * min(1.0, st.dt / 0.3)
+        self._prev_speed = st.speed_kmh
+        acc = max(-1.0, min(1.0, self.accel / 12.0))
+
+        target = min(1.0, st.pedal + 0.5 * st.swell)
+        self.load += (target - self.load) * min(1.0, st.dt / (0.12 if target > self.load else 0.4))
+        load = self.load
+
+        tg["res_fb"].set_value(0.86 + 0.1 * load)
+        tg["res"].set_value(0.25 + 0.5 * load + 0.2 * r)
+        tg["servo_f"].set_value(max(60.0, 180.0 + 120.0 * r + 160.0 * acc))
+        tg["servo"].set_value(min(1.0, abs(acc) * 1.3))
+        heavy = min(1.0, max(0.0, (load - 0.3) / 0.7))
+        tg["surge"].set_value(heavy)
+        tg["throb"].set_value(6.0 + 5.0 * heavy)
+        tg["air"].set_value(0.03 + 0.14 * r)
+        tg["air_f"].set_value(250.0 + 900.0 * r)
+        tg["gain"].set_value(_ev_gain(st, self.LEVEL))
+        mood = "surging" if heavy > 0.4 else ("spooling" if acc > 0.25 else
+                                               "winding down" if acc < -0.25 else "humming")
+        return f"{mood}  {f:3.0f} Hz"
+
+
+class JetTurbine(Voice):
+    """A turbofan, scaled down to stay out of whine territory. No music in it at all.
+
+    The engine has its own spool speed (N1), which lags the throttle like a real turbine:
+    pressing winds it up over a second or so, lifting off lets it run down slowly. Idles
+    while stopped. Everything is driven by the spool, not directly by the pedal:
+      shaft     the low hum of the rotating spool, with two spools (N1/N2) beating
+      blades    a soft fan blade-pass tone, kept around 400-1000 Hz and low in level
+      buzzsaw   near full power, a rough chord of shaft harmonics -- the ripping,
+                saw-like sound of a fan at takeoff thrust
+      intake    resonant air howl that rises with the spool
+      exhaust   broadband roar with slow turbulent swirl, plus the low popping crackle
+                of a jet exhaust under high thrust
+    Dry -- no hall: it is outdoors and mechanical.
+    """
+    name = "Jet Turbine"
+    LEVEL = 1.5
+    IDLE_N1 = 0.22
+    SPOOL_UP_SEC, SPOOL_DOWN_SEC = 0.9, 2.2
+    BLADES = 11
+    BUZZ = ((2.0, 0.9), (3.0, 0.6), (4.0, 0.75), (5.0, 0.45), (6.0, 0.5), (7.0, 0.3), (8.0, 0.35))
+
+    def __init__(self):
+        self.n1 = 0.0
+        super().__init__()
+
+    def build(self):
+        t = {"shaft": _target(40.0), "hum": _target(1.0), "blade": _target(0.1), "buzz": _target(0.0),
+             "intake_f": _target(500.0), "intake": _target(0.2), "roar_f": _target(250.0),
+             "roar": _target(0.2), "crackle_p": _target(0.0), "crackle": _target(0.0),
+             "gain": _target(0.0)}
+        shaft = Smooth(t["shaft"], 0.9995)
+
+        n2 = shaft * 1.37                                   # the core spool runs faster
+        hum = (SineOscillator(shaft) + SineOscillator(shaft * 2.0) * 0.5
+               + TriangleOscillator(n2) * 0.35 + SineOscillator(n2 * 2.01) * 0.2) * 0.12 \
+            * Smooth(t["hum"], 0.999)
+
+        bpf = shaft * self.BLADES                           # blade-pass, low and soft
+        blades = (SineOscillator(bpf) + SineOscillator(bpf * 1.006) * 0.8
+                  + SineOscillator(n2 * 7.0) * 0.4) * 0.009 * Smooth(t["blade"], 0.999)
+
+        buzz = None
+        for h, a in self.BUZZ:
+            p = SawOscillator(shaft * h * (1.0 + 0.0013 * h)) * a
+            buzz = p if buzz is None else buzz + p
+        buzz = SVFilter(Tanh(SVFilter(buzz * 0.25, "low_pass", cutoff=shaft * 9.0, resonance=0.0) * 2.0),
+                        "low_pass", cutoff=1400.0, resonance=0.0) * 0.3 * Smooth(t["buzz"], 0.999)
+
+        intake = SVFilter(WhiteNoise(), "band_pass", cutoff=Smooth(t["intake_f"], 0.999),
+                          resonance=0.5) * 0.22 * Smooth(t["intake"], 0.999)
+
+        swirl = Smooth(RandomUniform(0.55, 1.0, clock=Impulse(7.0)), 0.9997)
+        roar = SVFilter(PinkNoise(), "low_pass", cutoff=Smooth(t["roar_f"], 0.999),
+                        resonance=0.15) * swirl * 9.0 * Smooth(t["roar"], 0.999)
+
+        chance = RandomUniform(0.0, 1.0, clock=Impulse(35.0))
+        gate = Clip((chance - (Smooth(t["crackle_p"], 0.99) * -1.0 + 1.0)) * 1000.0, 0.0, 1.0)
+        crackle = SVFilter(WhiteNoise(), "band_pass", cutoff=520.0, resonance=0.3) \
+            * ASREnvelope(0.0005, 0.003, 0.03, curve=2.0, clock=gate) * 1.4 \
+            * Smooth(t["crackle"], 0.999)
+
+        mix = hum + blades + buzz + intake + roar + crackle
+        mix = SVFilter(mix, "low_pass", cutoff=3000.0, resonance=0.0)
+        return Tanh(mix * Smooth(t["gain"], 0.999)), t
+
+    def update(self, st):
+        r, tg = st.motor_ratio, self.targets
+        load = min(1.0, st.pedal + 0.4 * st.swell)
+        target = self.IDLE_N1 + (1.0 - self.IDLE_N1) * min(1.0, 0.75 * load + 0.35 * r)
+        tau = self.SPOOL_UP_SEC if target > self.n1 else self.SPOOL_DOWN_SEC
+        self.n1 += (target - self.n1) * min(1.0, st.dt / tau)
+        n1 = self.n1
+
+        tg["shaft"].set_value((32.0 + 58.0 * n1) * st.pitch_mul)        # 39 -> 90 Hz
+        tg["blade"].set_value(0.4 + 0.6 * n1)
+        thrust = min(1.0, max(0.0, (n1 - 0.65) / 0.3))                  # takeoff region
+        tg["buzz"].set_value(thrust ** 1.3)
+        tg["intake_f"].set_value(380.0 + 650.0 * n1)
+        tg["intake"].set_value(0.3 + 0.7 * n1)
+        tg["roar_f"].set_value(160.0 + 520.0 * n1 + 250.0 * r)
+        tg["roar"].set_value(0.15 + 0.55 * n1 ** 1.5 + 0.3 * r)
+        tg["crackle_p"].set_value(0.25 * thrust)
+        tg["crackle"].set_value(thrust)
+        tg["gain"].set_value(_ev_gain(st, self.LEVEL, idle_level=0.6))
+        return f"N1 {n1 * 100:3.0f}%" + ("  TAKEOFF" if thrust > 0.5 else "")
 
 
 def _interp_log(x, points):
