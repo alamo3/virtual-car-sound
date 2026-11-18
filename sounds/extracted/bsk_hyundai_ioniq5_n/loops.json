@@ -1,0 +1,292 @@
+{
+ "ext_fa01_on_6000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 412002
+ },
+ "bodywork": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 482467
+ },
+ "tyre_explosion": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 15793
+ },
+ "ext_fa01_off_4250": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 206969
+ },
+ "wind_draft_mono": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 493931
+ },
+ "500ss_idle": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 193607
+ },
+ "3835a_off": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 208162
+ },
+ "500ss_on_7500": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 398946
+ },
+ "500ss_off_2500": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 384078
+ },
+ "skid_ext_mono": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 149959
+ },
+ "transmission": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 648901
+ },
+ "4279_off": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 156818
+ },
+ "500_backfire3": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 28693
+ },
+ "ext_fa01_off_7000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 487668
+ },
+ "Skid": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 144217
+ },
+ "tyre_rolling": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 443949
+ },
+ "500_backfire7": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 34262
+ },
+ "horn": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 148160
+ },
+ "backfireEXT_8": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 16632
+ },
+ "gearup": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 13057
+ },
+ "flat_tyre_mono": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 394021
+ },
+ "500ss_on_4000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 450890
+ },
+ "7025": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 282006
+ },
+ "500ss_on_5500": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 353326
+ },
+ "backfireEXT_9": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 21116
+ },
+ "500_backfire5": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 15970
+ },
+ "wind": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 682948
+ },
+ "ext_fa01_on_4250": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 406761
+ },
+ "ext_fa01_on_5250": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 433206
+ },
+ "ext_fa01_off_3250": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 198656
+ },
+ "3916": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 126945
+ },
+ "500_limiter": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 15939
+ },
+ "backfireEXT_1": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 56980
+ },
+ "ext_fa01_off_5250": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 267292
+ },
+ "backfireEXT_7": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 16632
+ },
+ "backfireEXT_5": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 39314
+ },
+ "5813": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 268137
+ },
+ "backfireEXT_3": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 26946
+ },
+ "door_open": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 25800
+ },
+ "500ss_off_7500": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 272902
+ },
+ "missgear": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 111496
+ },
+ "500_backfire6": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 17496
+ },
+ "flutter_4": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 761871
+ },
+ "traction_control": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 103675
+ },
+ "backfireEXT_6": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 85845
+ },
+ "ext_fa01_on_6500": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 401668
+ },
+ "ext_fa01_off_2000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 273985
+ },
+ "backfireEXT_4": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 57597
+ },
+ "geardnEXT": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 8545
+ },
+ "500ss_on_3000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 178898
+ },
+ "5369_off": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 137633
+ },
+ "500_backfire4": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 26238
+ },
+ "turbo": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 543722
+ },
+ "backfireEXT_2": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 20916
+ },
+ "ext_fa01_on_1500": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 516810
+ },
+ "door_close": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 24377
+ },
+ "gearupEXT": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 8545
+ },
+ "500ss_off_4000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 424754
+ }
+}

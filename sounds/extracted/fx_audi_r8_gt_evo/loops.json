@@ -1,0 +1,1059 @@
+{
+ "sample_000": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 40373
+ },
+ "sample_001": {
+  "loop": [
+   30912,
+   118895
+  ],
+  "rate": 44100,
+  "frames": 118896
+ },
+ "sample_002": {
+  "loop": [
+   45256,
+   135851
+  ],
+  "rate": 44100,
+  "frames": 135852
+ },
+ "sample_003": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 29443
+ },
+ "sample_004": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 15793
+ },
+ "sample_005": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 85781
+ },
+ "sample_006": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 57653
+ },
+ "sample_007": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 27054
+ },
+ "sample_008": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 26676
+ },
+ "sample_009": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 24238
+ },
+ "sample_010": {
+  "loop": [
+   28336,
+   177104
+  ],
+  "rate": 44100,
+  "frames": 177105
+ },
+ "sample_011": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 493931
+ },
+ "sample_012": {
+  "loop": [
+   35032,
+   120800
+  ],
+  "rate": 44100,
+  "frames": 120801
+ },
+ "sample_013": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 147068
+ },
+ "sample_014": {
+  "loop": [
+   29020,
+   111615
+  ],
+  "rate": 44100,
+  "frames": 111616
+ },
+ "sample_015": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 21855
+ },
+ "sample_016": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 143126
+ },
+ "sample_017": {
+  "loop": [
+   51323,
+   259684
+  ],
+  "rate": 44100,
+  "frames": 259685
+ },
+ "sample_018": {
+  "loop": [
+   27266,
+   208199
+  ],
+  "rate": 44100,
+  "frames": 208200
+ },
+ "sample_019": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 81667
+ },
+ "sample_020": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 76842
+ },
+ "sample_021": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 219784
+ },
+ "sample_022": {
+  "loop": [
+   40385,
+   148201
+  ],
+  "rate": 44100,
+  "frames": 148202
+ },
+ "sample_023": {
+  "loop": [
+   36896,
+   120970
+  ],
+  "rate": 44100,
+  "frames": 120971
+ },
+ "sample_024": {
+  "loop": [
+   39908,
+   107136
+  ],
+  "rate": 44100,
+  "frames": 107137
+ },
+ "sample_025": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 153625
+ },
+ "sample_026": {
+  "loop": [
+   20026,
+   117804
+  ],
+  "rate": 44100,
+  "frames": 117805
+ },
+ "sample_027": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 31749
+ },
+ "sample_028": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 204318
+ },
+ "sample_029": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 46080
+ },
+ "sample_030": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 97058
+ },
+ "sample_031": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 207226
+ },
+ "sample_032": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 30399
+ },
+ "sample_033": {
+  "loop": [
+   113341,
+   226686
+  ],
+  "rate": 44100,
+  "frames": 226687
+ },
+ "sample_034": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 32526
+ },
+ "sample_035": {
+  "loop": [
+   127967,
+   255933
+  ],
+  "rate": 44100,
+  "frames": 255934
+ },
+ "sample_036": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 98460
+ },
+ "sample_037": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 205553
+ },
+ "sample_038": {
+  "loop": [
+   63937,
+   272075
+  ],
+  "rate": 44100,
+  "frames": 272076
+ },
+ "sample_039": {
+  "loop": [
+   23708,
+   98783
+  ],
+  "rate": 44100,
+  "frames": 98784
+ },
+ "sample_040": {
+  "loop": [
+   26849,
+   153427
+  ],
+  "rate": 44100,
+  "frames": 153428
+ },
+ "sample_041": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 116264
+ },
+ "sample_042": {
+  "loop": [
+   25442,
+   133906
+  ],
+  "rate": 44100,
+  "frames": 133907
+ },
+ "sample_043": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 100694
+ },
+ "sample_044": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 83007
+ },
+ "sample_045": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 146549
+ },
+ "sample_046": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 419214
+ },
+ "sample_047": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 114371
+ },
+ "sample_048": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 151357
+ },
+ "sample_049": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 127984
+ },
+ "sample_050": {
+  "loop": [
+   86786,
+   173571
+  ],
+  "rate": 44100,
+  "frames": 173572
+ },
+ "sample_051": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 20256
+ },
+ "sample_052": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 170113
+ },
+ "sample_053": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 14238
+ },
+ "sample_054": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 230974
+ },
+ "sample_055": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 233814
+ },
+ "sample_056": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 76556
+ },
+ "sample_057": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 33616
+ },
+ "sample_058": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 22634
+ },
+ "sample_059": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 96159
+ },
+ "sample_060": {
+  "loop": [
+   28276,
+   148759
+  ],
+  "rate": 44100,
+  "frames": 148760
+ },
+ "sample_061": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 45300
+ },
+ "sample_062": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 394021
+ },
+ "sample_063": {
+  "loop": [
+   24632,
+   156810
+  ],
+  "rate": 44100,
+  "frames": 156811
+ },
+ "sample_064": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 21667
+ },
+ "sample_065": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 104481
+ },
+ "sample_066": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 26048
+ },
+ "sample_067": {
+  "loop": [
+   26409,
+   107793
+  ],
+  "rate": 44100,
+  "frames": 107794
+ },
+ "sample_068": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 32336
+ },
+ "sample_069": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 58113
+ },
+ "sample_070": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 29195
+ },
+ "sample_071": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 124214
+ },
+ "sample_072": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 38320
+ },
+ "sample_073": {
+  "loop": [
+   13828,
+   125709
+  ],
+  "rate": 44100,
+  "frames": 125710
+ },
+ "sample_074": {
+  "loop": [
+   149747,
+   299570
+  ],
+  "rate": 44100,
+  "frames": 299571
+ },
+ "sample_075": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 382639
+ },
+ "sample_076": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 30654
+ },
+ "sample_077": {
+  "loop": [
+   19425,
+   80106
+  ],
+  "rate": 44100,
+  "frames": 80107
+ },
+ "sample_078": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 28620
+ },
+ "sample_079": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 34090
+ },
+ "sample_080": {
+  "loop": [
+   30757,
+   128157
+  ],
+  "rate": 44100,
+  "frames": 128158
+ },
+ "sample_081": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 40495
+ },
+ "sample_082": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 177240
+ },
+ "sample_083": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 159304
+ },
+ "sample_084": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 81465
+ },
+ "sample_085": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 82915
+ },
+ "sample_086": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 108764
+ },
+ "sample_087": {
+  "loop": [
+   135970,
+   271939
+  ],
+  "rate": 44100,
+  "frames": 271940
+ },
+ "sample_088": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 162757
+ },
+ "sample_089": {
+  "loop": [
+   149240,
+   298489
+  ],
+  "rate": 44100,
+  "frames": 298490
+ },
+ "sample_090": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 37678
+ },
+ "sample_091": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 253000
+ },
+ "sample_092": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 140243
+ },
+ "sample_093": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 199091
+ },
+ "sample_094": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 23871
+ },
+ "sample_095": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 94602
+ },
+ "sample_096": {
+  "loop": [
+   57130,
+   166803
+  ],
+  "rate": 44100,
+  "frames": 166804
+ },
+ "sample_097": {
+  "loop": [
+   37238,
+   188920
+  ],
+  "rate": 44100,
+  "frames": 188921
+ },
+ "sample_098": {
+  "loop": [
+   35694,
+   118894
+  ],
+  "rate": 44100,
+  "frames": 118895
+ },
+ "sample_099": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 388826
+ },
+ "sample_100": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 147342
+ },
+ "sample_101": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 102386
+ },
+ "sample_102": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 102540
+ },
+ "sample_103": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 38070
+ },
+ "sample_104": {
+  "loop": [
+   63484,
+   181382
+  ],
+  "rate": 44100,
+  "frames": 181383
+ },
+ "sample_105": {
+  "loop": [
+   23803,
+   122066
+  ],
+  "rate": 44100,
+  "frames": 122067
+ },
+ "sample_106": {
+  "loop": [
+   48007,
+   142244
+  ],
+  "rate": 44100,
+  "frames": 142245
+ },
+ "sample_107": {
+  "loop": [
+   29156,
+   157599
+  ],
+  "rate": 44100,
+  "frames": 157600
+ },
+ "sample_108": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 134605
+ },
+ "sample_109": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 115491
+ },
+ "sample_110": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 18966
+ },
+ "sample_111": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 157328
+ },
+ "sample_112": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 174523
+ },
+ "sample_113": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 101712
+ },
+ "sample_114": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 298047
+ },
+ "sample_115": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 31221
+ },
+ "sample_116": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 25800
+ },
+ "sample_117": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 247842
+ },
+ "sample_118": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 124856
+ },
+ "sample_119": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 38422
+ },
+ "sample_120": {
+  "loop": [
+   32485,
+   109194
+  ],
+  "rate": 44100,
+  "frames": 109195
+ },
+ "sample_121": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 761871
+ },
+ "sample_122": {
+  "loop": [
+   35716,
+   188736
+  ],
+  "rate": 44100,
+  "frames": 188737
+ },
+ "sample_123": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 212759
+ },
+ "sample_124": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 143093
+ },
+ "sample_125": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 230982
+ },
+ "sample_126": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 91800
+ },
+ "sample_127": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 181273
+ },
+ "sample_128": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 25380
+ },
+ "sample_129": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 28801
+ },
+ "sample_130": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 25094
+ },
+ "sample_131": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 82610
+ },
+ "sample_132": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 85480
+ },
+ "sample_133": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 210545
+ },
+ "sample_134": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 236157
+ },
+ "sample_135": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 139511
+ },
+ "sample_136": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 50367
+ },
+ "sample_137": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 31482
+ },
+ "sample_138": {
+  "loop": [
+   25437,
+   130446
+  ],
+  "rate": 44100,
+  "frames": 130447
+ },
+ "sample_139": {
+  "loop": [
+   29648,
+   121825
+  ],
+  "rate": 44100,
+  "frames": 121826
+ },
+ "sample_140": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 41775
+ },
+ "sample_141": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 88123
+ },
+ "sample_142": {
+  "loop": [
+   17617,
+   99255
+  ],
+  "rate": 44100,
+  "frames": 99256
+ },
+ "sample_143": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 69173
+ },
+ "sample_144": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 111653
+ },
+ "sample_145": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 87435
+ },
+ "sample_146": {
+  "loop": [
+   29974,
+   153715
+  ],
+  "rate": 44100,
+  "frames": 153716
+ },
+ "sample_147": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 167188
+ },
+ "sample_148": {
+  "loop": [
+   22353,
+   95122
+  ],
+  "rate": 44100,
+  "frames": 95123
+ },
+ "sample_149": {
+  "loop": [
+   26870,
+   168072
+  ],
+  "rate": 44100,
+  "frames": 168073
+ },
+ "sample_150": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 41421
+ },
+ "sample_151": {
+  "loop": [
+   28894,
+   111132
+  ],
+  "rate": 44100,
+  "frames": 111133
+ },
+ "sample_152": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 113875
+ },
+ "sample_153": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 213514
+ },
+ "sample_154": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 135270
+ },
+ "sample_155": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 27543
+ },
+ "sample_156": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 76556
+ },
+ "sample_157": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 42508
+ },
+ "sample_158": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 22965
+ },
+ "sample_159": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 32349
+ },
+ "sample_160": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 90036
+ },
+ "sample_161": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 134657
+ },
+ "sample_162": {
+  "loop": [
+   21148,
+   102796
+  ],
+  "rate": 44100,
+  "frames": 102797
+ },
+ "sample_163": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 169337
+ },
+ "sample_164": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 73979
+ },
+ "sample_165": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 84019
+ },
+ "sample_166": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 30815
+ },
+ "sample_167": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 85198
+ },
+ "sample_168": {
+  "loop": [
+   29416,
+   159005
+  ],
+  "rate": 44100,
+  "frames": 159006
+ },
+ "sample_169": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 173298
+ },
+ "sample_170": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 22419
+ },
+ "sample_171": {
+  "loop": [
+   24506,
+   90762
+  ],
+  "rate": 44100,
+  "frames": 90763
+ },
+ "sample_172": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 106182
+ },
+ "sample_173": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 86043
+ },
+ "sample_174": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 84642
+ },
+ "sample_175": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 24377
+ },
+ "sample_176": {
+  "loop": [
+   21563,
+   107818
+  ],
+  "rate": 44100,
+  "frames": 107819
+ },
+ "sample_177": {
+  "loop": [
+   27630,
+   164998
+  ],
+  "rate": 44100,
+  "frames": 164999
+ },
+ "sample_178": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 19925
+ },
+ "sample_179": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 21960
+ },
+ "sample_180": {
+  "loop": null,
+  "rate": 44100,
+  "frames": 105578
+ },
+ "sample_181": {
+  "loop": [
+   31390,
+   128122
+  ],
+  "rate": 44100,
+  "frames": 128123
+ }
+}
