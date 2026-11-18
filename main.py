@@ -480,7 +480,7 @@ class HumVoice(voices.Voice):
 
 VOICES = {v.name: v for v in (voices.RecordingI3, voices.JetsonsI3, voices.DeepDrone, voices.CinematicChord,
                               voices.CinematicDrive, voices.ActionPulse, voices.TrailerBrass,
-                              voices.StringsChoir, voices.GrandTourer, voices.InverterWhine, voices.Maglev,
+                              voices.StringsChoir, voices.Cathedral, voices.InverterWhine, voices.Maglev,
                               voices.WarpCore, voices.Theremin, voices.HoverTurbine,
                               JetsonsLowVoice,
                               JetsonsVoice, HumVoice,
