@@ -86,6 +86,7 @@ TRIM_DB: dict[str, float] = {
     'Trailer Brass': +6.6,
     'Strings & Choir': +2.9,
     'Cathedral': +3.6,
+    'Grand Touring': +7.0,
 }
 
 
@@ -677,6 +678,117 @@ class Cathedral(Voice):
         self.targets["reed"].set_value(reed)
         self.targets["gain"].set_value(_ev_gain(st, self.LEVEL))
         return f"{stops} stops" + (" + reed" if reed > 0.3 else "")
+
+
+class GrandTouring(Voice):
+    """Three layers, built the way production EV interior sounds are:
+
+      base    order synthesis, pitched by speed. Integer and half orders of a "motor"
+              frequency, with a separate harmonic recipe per load band (0-25, 25-50,
+              50-75, 75-100 %), crossfaded -- so the pedal changes the timbre itself:
+              round and calm when cruising, dense and metallic under full power.
+      torque  the load layer: a sub-octave and 1.5-order growl with roughness -- a
+              40-65 Hz amplitude flutter that hearing reads as strain -- and some grit.
+              Gone when cruising, heavy when you press.
+      shepard sines an octave apart sliding up a fixed bell, so speed keeps sounding like
+              it is rising while the base stays low ("flowing energy").
+    Load = smoothed pedal, plus a kick from quick presses. Motor frequency 55 -> 140 Hz.
+    """
+    name = "Grand Touring"
+    F_IDLE, F_TOP = 55.0, 140.0
+    LEVEL = 1.5
+    ORDERS = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
+    # amplitude of each order, per load band (cruise, light, firm, full)
+    LOAD_MAPS = (
+        (0.15, 1.0, 0.05, 0.50, 0.00, 0.25, 0.12, 0.00, 0.00, 0.00),
+        (0.25, 1.0, 0.15, 0.60, 0.05, 0.35, 0.20, 0.08, 0.00, 0.00),
+        (0.40, 1.0, 0.30, 0.75, 0.20, 0.60, 0.45, 0.30, 0.20, 0.10),
+        (0.55, 1.0, 0.50, 0.90, 0.40, 0.80, 0.70, 0.55, 0.40, 0.28),
+    )
+    STRETCH = 0.0015          # high orders run slightly sharp: a faint metallic shimmer
+    ROUGH_HZ = (40.0, 65.0)   # roughness flutter rate, light -> full load
+    SHEP_PARTIALS, SHEP_BASE, SHEP_CENTRE, SHEP_KMH = 6, 70.0, 420.0, 30.0
+
+    def __init__(self):
+        self.load = 0.0
+        super().__init__()
+
+    def build(self):
+        t = {"freq": _target(self.F_IDLE), "torque": _target(0.0),
+             "rough_hz": _target(self.ROUGH_HZ[0]), "rough": _target(0.0), "grit": _target(1.0),
+             "shep": _target(0.0), "gain": _target(0.0)}
+        f = Smooth(t["freq"], 0.9995)
+
+        # base: one sine per order, amplitudes set per tick from the load maps
+        drift = SineLFO(0.17, 0.92, 1.0)                    # slow life in the upper orders
+        low = high = None
+        for i, o in enumerate(self.ORDERS):
+            t[f"o{i}"] = _target(self.LOAD_MAPS[0][i])
+            stretch = 1.0 + self.STRETCH * max(0.0, o - 2.0)
+            p = SineOscillator(f * (o * stretch)) * Smooth(t[f"o{i}"], 0.9995)
+            if o > 2.0:
+                high = p if high is None else high + p
+            else:
+                low = p if low is None else low + p
+        # roughness: under load the upper orders flutter at 40-65 Hz along with the growl
+        flutter = SineLFO(Smooth(t["rough_hz"], 0.999), 0.0, 1.0)
+        rough = Smooth(t["rough"], 0.999)
+        base = (low + high * drift * ((flutter - 1.0) * rough + 1.0)) * 0.22
+
+        # torque: half-order growl, rough and gritty under load
+        src = SawOscillator(f * 0.5) + SawOscillator(f * 1.5 * 1.003) * 0.6 \
+            + SawOscillator(f * 1.002) * 0.4
+        growl = SVFilter(src, "low_pass", cutoff=f * 7.0, resonance=0.25)
+        growl = Tanh(growl * Smooth(t["grit"], 0.999)) * (flutter * 0.65 + 0.35)
+        torque = growl * 0.4 * Smooth(t["torque"], 0.9993)
+
+        # shepard: partial frequencies and levels set per tick (see update)
+        shep = None
+        for k in range(self.SHEP_PARTIALS):
+            t[f"sf{k}"] = _target(self.SHEP_BASE * 2 ** k)
+            t[f"sa{k}"] = _target(0.0)
+            p = SineOscillator(Smooth(t[f"sf{k}"], 0.995)) * Smooth(t[f"sa{k}"], 0.999)
+            shep = p if shep is None else shep + p
+        shep = shep * 0.07 * Smooth(t["shep"], 0.999)
+
+        out = _hall(base + torque + shep, wet=0.15)
+        return Tanh(out * Smooth(t["gain"], 0.999)), t
+
+    def update(self, st):
+        r, tg = st.motor_ratio, self.targets
+        f = self.F_IDLE * (self.F_TOP / self.F_IDLE) ** (r ** 0.85) * st.pitch_mul
+        tg["freq"].set_value(f)
+
+        target = min(1.0, st.pedal + 0.5 * st.swell)
+        tau = 0.12 if target > self.load else 0.35          # builds fast, eases off slower
+        self.load += (target - self.load) * min(1.0, st.dt / tau)
+        load = self.load
+
+        # base: crossfade the two load maps either side of the current load
+        x = load * (len(self.LOAD_MAPS) - 1)
+        lo = min(int(x), len(self.LOAD_MAPS) - 2)
+        w = x - lo
+        for i in range(len(self.ORDERS)):
+            a = self.LOAD_MAPS[lo][i] * (1.0 - w) + self.LOAD_MAPS[lo + 1][i] * w
+            tg[f"o{i}"].set_value(a)
+
+        heavy = min(1.0, max(0.0, (load - 0.2) / 0.8)) ** 1.3
+        tg["torque"].set_value(heavy)
+        tg["rough_hz"].set_value(self.ROUGH_HZ[0] + (self.ROUGH_HZ[1] - self.ROUGH_HZ[0]) * heavy)
+        tg["grit"].set_value(1.0 + 2.5 * heavy)
+        tg["rough"].set_value(0.6 * heavy)
+
+        phase = (st.speed_kmh / self.SHEP_KMH) % 1.0
+        centre = math.log2(self.SHEP_CENTRE / self.SHEP_BASE)
+        for k in range(self.SHEP_PARTIALS):
+            pos = k + phase
+            tg[f"sf{k}"].set_value(self.SHEP_BASE * 2 ** pos)
+            tg[f"sa{k}"].set_value(math.exp(-0.5 * ((pos - centre) / 1.0) ** 2))
+        tg["shep"].set_value(min(1.0, st.speed_kmh / 15.0) * (0.6 + 0.4 * load))
+
+        tg["gain"].set_value(_ev_gain(st, self.LEVEL))
+        band = ("cruise", "light", "firm", "full")[min(3, int(load * 4))]
+        return f"load {load * 100:3.0f}% ({band})"
 
 
 def _interp_log(x, points):
