@@ -903,6 +903,52 @@ class Engine:
         return f"car: no data ({r.errors} errors) {r.last_error[:40]}"
 
 
+class DataEngine:
+    """Data-only stand-in for Engine: reads the car, plays nothing.
+
+    For when the sound comes from the phone (Open Blue over Android Auto) and the Pi only
+    relays the car's data -- so it runs on a board with no audio output at all (Pi Zero 2 W).
+    Gives the Bluetooth server the same fields as Engine (speed, pedal_n, fresh, reader,
+    events, settings, message, info), smoothed the same way, with no audio graph or voices.
+    """
+    current = None
+
+    def __init__(self, settings, car_link, log=print):
+        self.settings = settings
+        self.log = log
+        self.link = car_link
+        self.reader = _LinkReader(car_link)
+        self.car = CarInput(self.reader)
+        self.events = fx.DriveEvents()
+        self.speed = 0.0
+        self.pedal_n = 0.0
+        self.fresh = False
+        self.info = "data only: the sound plays on the phone"
+        self.message = ""
+        self._last = None
+
+    def tick(self, now=None):
+        now = time.monotonic() if now is None else now
+        dt = 0.02 if self._last is None else now - self._last
+        self._last = now
+        _, pedal, fresh = self.car.step(dt)
+        r = self.reader
+        speed = self.car.speed
+        pedal_n = max(0.0, min(1.0, pedal / MAX_PEDAL))
+        # reverse (and regen) detection, the same as when the Pi plays the sound
+        self.events.step(dt, speed, pedal_n, fresh, current=r.battery_current,
+                         signed_rpm=r.motor_rpm_signed, data_age=now - r.rpm_at,
+                         reverse_test=self.settings.reverse_test, virtual_gears=False,
+                         regen_fade=REGEN_FADE)
+        self.speed, self.pedal_n, self.fresh = speed, pedal_n, fresh
+
+    def status(self):
+        return (f"{self.speed:5.1f} km/h   pedal {self.pedal_n * 100:3.0f} %"
+                + ("   REVERSE" if self.events.reverse else ""))
+
+    car_summary = Engine.car_summary
+
+
 # --- Front ends ----------------------------------------------------------------------------
 
 PI_BUFFER_FRAMES = 512
@@ -1136,6 +1182,64 @@ def run_headless(args, settings, link):
         raise SystemExit(75)
 
 
+def run_data_only(args, settings, link):
+    """No sound: read the car and send its data to the phone over Bluetooth LE."""
+    t0 = time.monotonic()
+
+    def log(msg):
+        print(f"[{time.monotonic() - t0:6.1f}s] {msg}", flush=True)
+
+    link.log = log
+    link.start()
+    engine = DataEngine(settings, link, log=log)
+    import ble_control
+    control = ble_control.ControlServer(engine, list(VOICES), save_settings, log=log)
+    control.start()
+
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+
+    log("running data only (no sound): car -> phone over Bluetooth; Ctrl+C / SIGTERM to stop")
+    period, next_t, last_log, last_ping, errors = 0.02, time.monotonic(), 0.0, 0.0, 0
+    restart_reason = None
+    sd_notify("READY=1")
+    sd_notify("STATUS=data only: sending car data to the phone")
+    try:
+        while not stop.is_set():
+            now = time.monotonic()
+            try:
+                engine.tick(now)
+                errors = 0
+            except Exception as e:      # one bad tick must not stop the data
+                errors += 1
+                if errors == 1 or errors % 250 == 0:
+                    log(f"error ({errors} in a row): {e!r}\n{traceback.format_exc()}")
+                if errors >= TICK_ERRORS_RESTART:
+                    restart_reason = f"keeps failing ({e!r})"
+                    break
+            if now - last_ping >= 2.0:  # systemd kills and restarts us if these stop
+                last_ping = now
+                sd_notify("WATCHDOG=1")
+            if args.log_every and now - last_log >= args.log_every:
+                last_log = now
+                log(f"{engine.status().strip()}   | {engine.car_summary()}")
+            next_t += period
+            delay = next_t - time.monotonic()
+            if delay > 0:
+                stop.wait(delay)
+            else:
+                next_t = time.monotonic()
+    finally:
+        log("stopping")
+        sd_notify("STOPPING=1")
+        control.stop()
+        link.stop()
+    if restart_reason:
+        log(f"{restart_reason}: restarting")
+        raise SystemExit(75)
+
+
 def main():
     global MAX_MOTOR_RPM
     import argparse
@@ -1176,6 +1280,10 @@ def main():
     hl.add_argument("--headless", action="store_true",
                     help="no window: chime at start-up, connect to the car in the background "
                          "and keep reconnecting; logs status lines to stdout")
+    hl.add_argument("--data-only", action="store_true",
+                    help="no sound: just read the car and send its data to the phone over "
+                         "Bluetooth LE (Open Blue plays the sound). Implies --headless --car "
+                         "--bluetooth; needs no speaker, so it runs on a Pi Zero 2 W")
     hl.add_argument("--demo", action="store_true",
                     help="with --headless and no --car: loop a scripted 40 s drive")
     ap.add_argument("--output-device", default=None,
@@ -1208,10 +1316,14 @@ def main():
                         effects=args.effects, cruise_quiet=args.cruise_quiet,
                         idle_hum=max(0.0, min(1.0, args.idle_hum)),
                         virtual_gears=args.virtual_gears)
+    if args.data_only:
+        args.headless = args.car = args.bluetooth = True
     if args.bluetooth or args.headless:   # the phone's last settings win over the defaults
         load_settings(settings)
     link = CarLink(args.port, args.rpm_every) if args.car else None
-    if args.headless:
+    if args.data_only:
+        run_data_only(args, settings, link)
+    elif args.headless:
         run_headless(args, settings, link)
     else:
         run_gui(args, settings, link)

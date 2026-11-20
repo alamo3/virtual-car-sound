@@ -2,6 +2,12 @@
 # Install the virtual car sound engine as a systemd service that starts at boot.
 #
 #   sudo ./install_service.sh            install (or update) and start it
+#   sudo ./install_service.sh --data-only
+#                                        install in data-only mode: no sound on the Pi, it just
+#                                        reads the car and sends the data to the phone (Open Blue
+#                                        plays the sound). Needs no speaker: fits a Pi Zero 2 W
+#   sudo ./install_service.sh --with-sound
+#                                        switch back to the Pi playing the sound itself
 #   sudo ./install_service.sh uninstall  stop it and remove the service
 #   ./install_service.sh status          is it running?
 #   ./install_service.sh logs            follow its log (Ctrl+C to stop following)
@@ -24,7 +30,10 @@ HW_WATCHDOG=/etc/systemd/system.conf.d/90-$NAME-watchdog.conf
 DEFAULTS=/etc/default/$NAME
 RUN_USER="${SUDO_USER:-$(id -un)}"
 # start options: headless (no window), read the car over OBD, accept the phone app
-DEFAULT_ARGS="--headless --car --bluetooth --log-every 30"
+SOUND_ARGS="--headless --car --bluetooth --log-every 30"
+# data only: no sound, just the car's data to the phone over Bluetooth
+DATA_ARGS="--data-only --log-every 30"
+MODE=""        # "", "data" or "sound": set by --data-only / --with-sound
 
 need_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -54,8 +63,9 @@ install() {
     echo "-- installing Python requirements into .venv (with the venv's own pip)"
     sudo -u "$RUN_USER" "$DIR/.venv/bin/python" -m pip install -q -r "$DIR/requirements.txt"
 
-    # ffmpeg: reads the mp3 recordings some voices use (Raspberry Pi OS Lite lacks it)
-    if ! command -v ffmpeg >/dev/null; then
+    # ffmpeg: reads the mp3 recordings some voices use (Raspberry Pi OS Lite lacks it);
+    # not needed when the Pi plays no sound
+    if [ "$MODE" != data ] && ! command -v ffmpeg >/dev/null; then
         echo "-- installing ffmpeg"
         apt-get install -y -qq ffmpeg >/dev/null || echo "   (couldn't install ffmpeg: no network?)"
     fi
@@ -69,17 +79,26 @@ install() {
     systemctl enable --now bluetooth >/dev/null 2>&1 || echo "   (no bluetooth service found)"
     command -v rfkill >/dev/null && rfkill unblock bluetooth || true
 
-    # start options: kept if the file already exists, so your edits survive updates
+    # start options: kept if the file already exists, so your edits survive updates --
+    # unless --data-only / --with-sound asks for a different mode
+    local args="$SOUND_ARGS"
+    [ "$MODE" = data ] && args="$DATA_ARGS"
     if [ ! -f "$DEFAULTS" ]; then
         cat > "$DEFAULTS" <<EOF
 # Options for $NAME (see: $DIR/.venv/bin/python $DIR/main.py --help)
-# e.g. add  --voice "Loop Engine (BMW M3 GTR interior)"  or  --output-device usb
-VCS_ARGS="$DEFAULT_ARGS"
+# Sound on the Pi:  VCS_ARGS="$SOUND_ARGS"
+#   (e.g. add  --voice "Loop Engine (BMW M3 GTR interior)"  or  --output-device usb)
+# Data only (the phone plays the sound):  VCS_ARGS="$DATA_ARGS"
+VCS_ARGS="$args"
 EOF
         echo "-- wrote $DEFAULTS"
+    elif [ -n "$MODE" ]; then
+        sed -i "s|^VCS_ARGS=.*|VCS_ARGS=\"$args\"|" "$DEFAULTS"
+        echo "-- set $DEFAULTS to $MODE mode: VCS_ARGS=\"$args\""
     else
         echo "-- keeping existing $DEFAULTS"
     fi
+    echo "-- mode: $(grep -q -- '--data-only' "$DEFAULTS" && echo 'data only (no sound on the Pi)' || echo 'sound on the Pi')"
 
     cat > "$UNIT" <<EOF
 [Unit]
@@ -146,10 +165,20 @@ uninstall() {
     echo "Removed the $NAME service (kept $DEFAULTS and the project files)."
 }
 
-case "${1:-install}" in
+CMD=install
+for a in "$@"; do
+    case "$a" in
+        --data-only) MODE=data ;;
+        --with-sound) MODE=sound ;;
+        -*) echo "unknown option $a" >&2; exit 2 ;;
+        *) CMD="$a" ;;
+    esac
+done
+
+case "$CMD" in
     install) install ;;
     uninstall|remove) uninstall ;;
     status) systemctl --no-pager status "$NAME" ;;
     logs) journalctl -u "$NAME" -f -n 50 ;;
-    *) echo "usage: sudo $0 [install|uninstall] | $0 [status|logs]" >&2; exit 2 ;;
+    *) echo "usage: sudo $0 [install] [--data-only|--with-sound] | sudo $0 uninstall | $0 [status|logs]" >&2; exit 2 ;;
 esac
