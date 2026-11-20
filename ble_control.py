@@ -16,6 +16,15 @@ scans for the service, connects and talks over three characteristics:
               "car": data fresh?, "fx": .., "ss": .., "vg": .., "cq": .., "ih": ..,
               "msg": last problem, e.g. a voice that failed to load ("" when all is well)}
   LIST     notify: the voice list, as above
+  TELEMETRY  notify, 25 times a second, 10 bytes little-endian -- the car's data for apps
+           that make the sound themselves (Open Blue plays it through Android Auto):
+             u8  version (1)
+             u8  flags: bit0 data fresh, bit1 reversing
+             u16 speed, km/h x 100
+             u8  accelerator pedal, % x 2 (0..200)
+             i16 motor rpm, signed (negative in reverse; 0 if unknown)
+             i16 battery current, A x 10 (negative = regen / charging; 0 if unknown)
+             u8  sequence number (wraps), to spot dropped packets
 
 Every change is saved (settings.json), so the car starts the next drive the same way.
 Runs on its own thread with its own asyncio loop; the audio loop reads the shared
@@ -26,12 +35,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import struct
 import threading
 
 SERVICE = "7a6b0001-3c1e-4b7a-9d55-2f1c0e5b8a01"
 COMMAND = "7a6b0002-3c1e-4b7a-9d55-2f1c0e5b8a01"
 STATUS = "7a6b0003-3c1e-4b7a-9d55-2f1c0e5b8a01"
 LIST = "7a6b0004-3c1e-4b7a-9d55-2f1c0e5b8a01"
+TELEMETRY = "7a6b0005-3c1e-4b7a-9d55-2f1c0e5b8a01"
+TELEMETRY_HZ = 25
 NAME = "VirtualCarSound"
 
 BOOL_KEYS = {"effects", "small_speaker", "virtual_gears", "cruise_quiet"}
@@ -95,12 +107,18 @@ class ControlServer:
             SERVICE, STATUS, C.read | C.notify, bytearray(self._status()), P.readable)
         await self.server.add_new_characteristic(
             SERVICE, LIST, C.read | C.notify, bytearray(b"#end"), P.readable)
+        await self.server.add_new_characteristic(
+            SERVICE, TELEMETRY, C.read | C.notify, bytearray(self._telemetry()), P.readable)
         await self.server.start()
         self.log(f"bluetooth control: advertising as {NAME!r}")
-        quiet, n = 0, 0
+        quiet, n, tick = 0, 0, 0
         while not self._stop.is_set():
+            self._notify(TELEMETRY, self._telemetry())
+            await asyncio.sleep(1.0 / TELEMETRY_HZ)
+            tick += 1
+            if tick % TELEMETRY_HZ:      # the rest runs once a second
+                continue
             self._notify(STATUS, self._status())
-            await asyncio.sleep(1.0)
             n += 1
             if n % 10 == 0:             # health check: BlueZ restarted / adapter gone?
                 # either call raises if bluetoothd went away -> _run starts over
@@ -180,6 +198,25 @@ class ControlServer:
             return f"unknown command {cmd!r}"
         self.save(s)
         return "ok"
+
+    _seq = 0
+
+    def _telemetry(self) -> bytes:
+        """The car's data as a 10-byte packet (layout in the module docstring)."""
+        e = self.engine
+        r = getattr(e, "reader", None)
+        rpm = getattr(r, "motor_rpm_signed", None) if r else None
+        amps = getattr(r, "battery_current", None) if r else None
+        events = getattr(e, "events", None)
+        flags = (1 if e.fresh else 0) | (2 if events is not None and events.reverse else 0)
+        self._seq = (self._seq + 1) & 0xFF
+        clamp = lambda v, lo, hi: max(lo, min(hi, int(round(v))))
+        return struct.pack("<BBHBhhB", 1, flags,
+                           clamp(e.speed * 100, 0, 65535),
+                           clamp(getattr(e, "pedal_n", 0.0) * 200, 0, 200),
+                           clamp(rpm or 0, -32768, 32767),
+                           clamp((amps or 0) * 10, -32768, 32767),
+                           self._seq)
 
     def _status(self) -> bytes:
         e, s = self.engine, self.engine.settings
