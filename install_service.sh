@@ -18,6 +18,8 @@
 #   - switches Bluetooth on at boot
 #   - writes /etc/default/virtual-car-sound with the start options (edit to change them)
 #   - writes /etc/systemd/system/virtual-car-sound.service, enables and starts it
+# Before each start the service runs update.sh: if the Pi is online it pulls the latest code
+# from GitHub (fast-forward only, never over local changes); offline it just starts.
 # The service runs as the user who ran sudo and logs to the system journal. It restarts
 # whenever it exits or hangs (systemd watchdog), with no limit on restarts, and the Pi's
 # hardware watchdog reboots the board if the whole system ever freezes. The phone app's settings are kept in ~/.config/virtual-car-sound/.
@@ -122,13 +124,16 @@ StartLimitIntervalSec=0
 Type=notify
 NotifyAccess=main
 WatchdogSec=60
-TimeoutStartSec=180
+# long enough for update.sh to install new Python packages before the engine starts
+TimeoutStartSec=900
 TimeoutStopSec=10
 User=$RUN_USER
 SupplementaryGroups=bluetooth audio dialout
 WorkingDirectory=$DIR
 EnvironmentFile=-$DEFAULTS
 Environment=PYTHONUNBUFFERED=1
+# update from GitHub first if online (never fails the start: the leading '-')
+ExecStartPre=-$DIR/update.sh
 ExecStart=$DIR/.venv/bin/python $DIR/main.py \$VCS_ARGS
 Restart=always
 RestartSec=3
