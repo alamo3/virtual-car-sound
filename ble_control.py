@@ -16,7 +16,9 @@ scans for the service, connects and talks over three characteristics:
               "car": data fresh?, "fx": .., "ss": .., "vg": .., "cq": .., "ih": ..,
               "msg": last problem, e.g. a voice that failed to load ("" when all is well)}
   LIST     notify: the voice list, as above
-  TELEMETRY  notify, 25 times a second, 10 bytes little-endian -- the car's data for apps
+  TELEMETRY  notify, as soon as each new reading arrives from the car (~25-30 a second;
+           at least 25 a second even without one), 10 bytes little-endian -- the car's data,
+           raw (not smoothed: the app smooths it itself, so it isn't delayed twice), for apps
            that make the sound themselves (Open Blue plays it through Android Auto):
              u8  version (1)
              u8  flags: bit0 data fresh, bit1 reversing
@@ -44,6 +46,7 @@ STATUS = "7a6b0003-3c1e-4b7a-9d55-2f1c0e5b8a01"
 LIST = "7a6b0004-3c1e-4b7a-9d55-2f1c0e5b8a01"
 TELEMETRY = "7a6b0005-3c1e-4b7a-9d55-2f1c0e5b8a01"
 TELEMETRY_HZ = 25
+TELEMETRY_POLL_SEC = 0.004   # how often to look for a new reading to send
 NAME = "VirtualCarSound"
 
 BOOL_KEYS = {"effects", "small_speaker", "virtual_gears", "cruise_quiet"}
@@ -111,13 +114,24 @@ class ControlServer:
             SERVICE, TELEMETRY, C.read | C.notify, bytearray(self._telemetry()), P.readable)
         await self.server.start()
         self.log(f"bluetooth control: advertising as {NAME!r}")
-        quiet, n, tick = 0, 0, 0
+        quiet, n = 0, 0
+        loop_time = self.loop.time
+        last_sent = last_status = loop_time()
+        seen = None
         while not self._stop.is_set():
-            self._notify(TELEMETRY, self._telemetry())
-            await asyncio.sleep(1.0 / TELEMETRY_HZ)
-            tick += 1
-            if tick % TELEMETRY_HZ:      # the rest runs once a second
+            # a new reading goes out straight away (checked every 4 ms); without one,
+            # a packet at least TELEMETRY_HZ times a second so the app knows we're here
+            await asyncio.sleep(TELEMETRY_POLL_SEC)
+            now = loop_time()
+            r = getattr(self.engine, "reader", None)
+            stamp = getattr(r, "updated_at", None) if r is not None else None
+            if stamp != seen or now - last_sent >= 1.0 / TELEMETRY_HZ:
+                seen = stamp
+                last_sent = now
+                self._notify(TELEMETRY, self._telemetry())
+            if now - last_status < 1.0:  # the rest runs once a second
                 continue
+            last_status = now
             self._notify(STATUS, self._status())
             n += 1
             if n % 10 == 0:             # health check: BlueZ restarted / adapter gone?
@@ -205,6 +219,12 @@ class ControlServer:
         """The car's data as a 10-byte packet (layout in the module docstring)."""
         e = self.engine
         r = getattr(e, "reader", None)
+        # the raw reading when there is one: the Pi's own smoothing is for its own sound
+        raw_speed = getattr(r, "speed", None) if r else None
+        raw_pedal = getattr(r, "pedal", None) if r else None
+        live = bool(e.fresh) and raw_speed is not None and raw_pedal is not None
+        speed = raw_speed if live else e.speed
+        pedal = raw_pedal / 100.0 if live else getattr(e, "pedal_n", 0.0)
         rpm = getattr(r, "motor_rpm_signed", None) if r else None
         amps = getattr(r, "battery_current", None) if r else None
         events = getattr(e, "events", None)
@@ -212,8 +232,8 @@ class ControlServer:
         self._seq = (self._seq + 1) & 0xFF
         clamp = lambda v, lo, hi: max(lo, min(hi, int(round(v))))
         return struct.pack("<BBHBhhB", 1, flags,
-                           clamp(e.speed * 100, 0, 65535),
-                           clamp(getattr(e, "pedal_n", 0.0) * 200, 0, 200),
+                           clamp(speed * 100, 0, 65535),
+                           clamp(pedal * 200, 0, 200),
                            clamp(rpm or 0, -32768, 32767),
                            clamp((amps or 0) * 10, -32768, 32767),
                            self._seq)

@@ -1271,9 +1271,11 @@ def main():
     ap.add_argument("--car", action="store_true",
                     help="drive pedal and pitch from the car over OBD (IONIQ 5 / E-GMP)")
     ap.add_argument("--port", default=None, help="OBD adapter port (default: autodetect)")
-    ap.add_argument("--rpm-every", type=int, default=4,
+    ap.add_argument("--rpm-every", type=int, default=None,
                     help="with --car: read motor rpm every Nth cycle to calibrate the "
-                         "rpm/km/h ratio (0 = never; pedal+speed then run at ~33 Hz)")
+                         "rpm/km/h ratio (0 = never; pedal+speed then run at ~33 Hz). "
+                         "Default 4, or 8 with --data-only: each rpm read holds up the "
+                         "pedal ~95 ms, and the phone only needs it to spot reversing")
     hl = ap.add_argument_group("headless (Raspberry Pi)")
     hl.add_argument("--bluetooth", action="store_true",
                     help="accept control from the phone app over Bluetooth LE (ble_control.py)")
@@ -1318,6 +1320,8 @@ def main():
                         virtual_gears=args.virtual_gears)
     if args.data_only:
         args.headless = args.car = args.bluetooth = True
+    if args.rpm_every is None:
+        args.rpm_every = 8 if args.data_only else 4
     if args.bluetooth or args.headless:   # the phone's last settings win over the defaults
         load_settings(settings)
     link = CarLink(args.port, args.rpm_every) if args.car else None
