@@ -63,9 +63,17 @@ install() {
     echo "-- installing Python requirements into .venv (with the venv's own pip)"
     sudo -u "$RUN_USER" "$DIR/.venv/bin/python" -m pip install -q -r "$DIR/requirements.txt"
 
+    # the mode it will run in: the one asked for, else the one it's already in
+    local mode="$MODE"
+    if [ -z "$mode" ] && [ -f "$DEFAULTS" ] && grep -q -- '^VCS_ARGS=.*--data-only' "$DEFAULTS"; then
+        mode=data
+    fi
+
     # ffmpeg: reads the mp3 recordings some voices use (Raspberry Pi OS Lite lacks it);
-    # not needed when the Pi plays no sound
-    if [ "$MODE" != data ] && ! command -v ffmpeg >/dev/null; then
+    # not needed in data-only mode, where the Pi plays no sound
+    if [ "$mode" = data ]; then
+        echo "-- data only: skipping ffmpeg"
+    elif ! command -v ffmpeg >/dev/null; then
         echo "-- installing ffmpeg"
         apt-get install -y -qq ffmpeg >/dev/null || echo "   (couldn't install ffmpeg: no network?)"
     fi
