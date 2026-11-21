@@ -13,14 +13,15 @@ Layers
   mech      valvetrain and timing-chain detail: a faint high order whine and ticking
   overrun   off the throttle: the exhaust softens and darkens; after lifting off a hard pull,
             crackles and pops
-  shifts    a DCT upshift under load cuts the ignition (the pulses drop out for the cut) and
-            leaves a single bark
+  shifts    a DCT upshift under load cuts the ignition (the pulses drop out for the cut);
+            the regular hydraulic shift sound plays on every shift
 """
 from __future__ import annotations
 
 import numpy as np
 
 import dsp
+import shiftfx
 from dsp import SR, lerp
 
 IDLE, REDLINE = 900.0, 8500.0
@@ -130,6 +131,9 @@ def render(c: dict, seed: int = 1) -> np.ndarray:
     pan = 0.5 + 0.2 * np.sin(np.arange(n) / SR * 3.0)
     out[:, 0] += crackle * pan
     out[:, 1] += crackle * (1 - pan)
+
+    # --- the regular hydraulic shift sound on every shift ---------------------------------
+    shiftfx.mix(out, c, level=0.30)
 
     # --- in the cabin: a little weight, the top softened -------------------------------
     for ch in range(2):

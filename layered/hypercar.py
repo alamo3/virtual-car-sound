@@ -12,7 +12,7 @@ Layers
             its neighbour order, louder under torque and under regen
   spool     a high, breathy whistle that rises with revs at high load (turbine-like)
   air       road / wind rush rising with speed
-  shift     on an upshift: a short downward "zap" and a stereo whoosh; the core dips
+  shift     the regular hydraulic shift sound on every shift; the core dips through it
   regen     off the pedal while slowing: the motor whine descends with speed, a soft pad
             underneath
 """
@@ -21,6 +21,7 @@ from __future__ import annotations
 import numpy as np
 
 import dsp
+import shiftfx
 from dsp import SR, lerp
 
 IDLE, REDLINE = 1000.0, 9000.0
@@ -86,17 +87,8 @@ def render(c: dict, seed: int = 2) -> np.ndarray:
     air = np.stack([dsp.biquad(dsp.pink(n, seed + s), "bp", lerp(500.0, 1800.0, speed_n), 0.6) for s in (1, 2)], 1)
     out += air * (speed_n ** 1.6 * 0.12)[:, None]
 
-    # --- shifts: a zap down and a whoosh ---------------------------------------------------
-    zap_len = int(0.22 * SR)
-    tz = np.arange(zap_len) / SR
-    zap = np.sin(2 * np.pi * np.cumsum(lerp(2400.0, 300.0, tz / 0.22)) / SR) * np.exp(-tz / 0.05)
-    whoosh = dsp.biquad(dsp.white(zap_len, seed + 4), "bp", 1500.0, 0.8) * np.sin(np.pi * tz / 0.22) ** 2
-    ups = dsp.events(c["shifts"])
-    for i in ups:
-        m = min(zap_len, n - i)
-        strength = 0.4 + 0.6 * load[i]
-        out[i:i + m, 0] += (zap[:m] * 0.10 + whoosh[:m] * 0.08 * np.linspace(1, 0, m)) * strength
-        out[i:i + m, 1] += (zap[:m] * 0.10 + whoosh[:m] * 0.08 * np.linspace(0, 1, m)) * strength
+    # --- shifts: the regular hydraulic shift sound (as the app plays it) -------------------
+    shiftfx.mix(out, c, level=0.35)
 
     # --- regen: a soft pad while slowing off the pedal --------------------------------------
     pad_f = lerp(110.0, 220.0, speed_n)
