@@ -81,6 +81,7 @@ Engine::Engine(int sampleRate, const std::string& effectsDir)
 Engine::~Engine() = default;
 
 void Engine::setSound(Sound s) {
+    if (dct_ && s == sound_) return;   // the same sound again (hosts resend settings): keep its gearbox as it is
     sound_ = s;
     const SoundInfo& in = info(s);
     dct_ = std::make_unique<Dct>(in.idle, in.redline);

@@ -11,6 +11,7 @@ scans for the service, connects and talks over three characteristics:
              voices                send the voice list (on LIST, one name per notification,
                                    then "#end")
              status                send the status now
+             testdrive start|stop  with --native-sound: a scripted drive (0-100-0 km/h)
   STATUS   read + notify, JSON, about once a second:
              {"v": voice, "vol": volume, "kmh": speed, "info": engine line,
               "car": data fresh?, "fx": .., "ss": .., "vg": .., "cq": .., "ih": ..,
@@ -194,6 +195,12 @@ class ControlServer:
         cmd, arg = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
         if cmd in ("voices", "status"):
             return None
+        if cmd == "testdrive":                   # the native player's scripted drive (start / stop)
+            native = getattr(self.engine, "native", None)
+            if native is None:
+                return "no test drive: the Pi isn't playing the sound"
+            native.command(f"testdrive {'stop' if arg.strip() == 'stop' else 'start'}")
+            return "ok"
         if cmd == "voice":
             if arg not in self.voices:
                 return f"unknown voice {arg!r}"

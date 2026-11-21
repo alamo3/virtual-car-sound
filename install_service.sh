@@ -6,6 +6,11 @@
 #                                        install in data-only mode: no sound on the Pi, it just
 #                                        reads the car and sends the data to the phone (Open Blue
 #                                        plays the sound). Needs no speaker: fits a Pi Zero 2 W
+#   sudo ./install_service.sh --native-sound
+#                                        the Pi plays the sound with the native engine
+#                                        (soundcore/: the same sounds as Open Blue) to a USB sound
+#                                        card or soundbar, and still sends the car's data to the
+#                                        phone. Builds the player (needs cmake, g++, ALSA headers)
 #   sudo ./install_service.sh --with-sound
 #                                        switch back to the Pi playing the sound itself
 #   sudo ./install_service.sh uninstall  stop it and remove the service
@@ -35,7 +40,9 @@ RUN_USER="${SUDO_USER:-$(id -un)}"
 SOUND_ARGS="--headless --car --bluetooth --log-every 30"
 # data only: no sound, just the car's data to the phone over Bluetooth
 DATA_ARGS="--data-only --log-every 30"
-MODE=""        # "", "data" or "sound": set by --data-only / --with-sound
+# native sound: the C++ player (soundcore/) makes the sound, Python reads the car and serves the phone
+NATIVE_ARGS="--native-sound --log-every 30"
+MODE=""        # "", "data", "native" or "sound": set by --data-only / --native-sound / --with-sound
 
 need_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -70,11 +77,23 @@ install() {
     if [ -z "$mode" ] && [ -f "$DEFAULTS" ] && grep -q -- '^VCS_ARGS=.*--data-only' "$DEFAULTS"; then
         mode=data
     fi
+    if [ -z "$mode" ] && [ -f "$DEFAULTS" ] && grep -q -- '^VCS_ARGS=.*--native-sound' "$DEFAULTS"; then
+        mode=native
+    fi
+
+    # native sound: build the player (as the user) -- cmake, a C++ compiler, ALSA headers
+    if [ "$mode" = native ]; then
+        echo "-- native sound: installing build tools and building soundcore/"
+        apt-get install -y -qq cmake g++ libasound2-dev >/dev/null || echo "   (couldn't install the build tools: no network?)"
+        sudo -u "$RUN_USER" cmake -S "$DIR/soundcore" -B "$DIR/soundcore/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
+        sudo -u "$RUN_USER" cmake --build "$DIR/soundcore/build" -j2
+        sudo -u "$RUN_USER" "$DIR/soundcore/build/sc_tests" "$DIR/soundcore/effects" | tail -1
+    fi
 
     # ffmpeg: reads the mp3 recordings some voices use (Raspberry Pi OS Lite lacks it);
     # not needed in data-only mode, where the Pi plays no sound
-    if [ "$mode" = data ]; then
-        echo "-- data only: skipping ffmpeg"
+    if [ "$mode" = data ] || [ "$mode" = native ]; then
+        echo "-- $mode mode: skipping ffmpeg (no Python voices)"
     elif ! command -v ffmpeg >/dev/null; then
         echo "-- installing ffmpeg"
         apt-get install -y -qq ffmpeg >/dev/null || echo "   (couldn't install ffmpeg: no network?)"
@@ -93,12 +112,14 @@ install() {
     # unless --data-only / --with-sound asks for a different mode
     local args="$SOUND_ARGS"
     [ "$MODE" = data ] && args="$DATA_ARGS"
+    [ "$MODE" = native ] && args="$NATIVE_ARGS"
     if [ ! -f "$DEFAULTS" ]; then
         cat > "$DEFAULTS" <<EOF
 # Options for $NAME (see: $DIR/.venv/bin/python $DIR/main.py --help)
 # Sound on the Pi:  VCS_ARGS="$SOUND_ARGS"
 #   (e.g. add  --voice "Loop Engine (BMW M3 GTR interior)"  or  --output-device usb)
 # Data only (the phone plays the sound):  VCS_ARGS="$DATA_ARGS"
+# Native sound on the Pi (soundcore/):  VCS_ARGS="$NATIVE_ARGS"  (add --output-device NAME)
 VCS_ARGS="$args"
 EOF
         echo "-- wrote $DEFAULTS"
@@ -108,7 +129,8 @@ EOF
     else
         echo "-- keeping existing $DEFAULTS"
     fi
-    echo "-- mode: $(grep -q -- '--data-only' "$DEFAULTS" && echo 'data only (no sound on the Pi)' || echo 'sound on the Pi')"
+    echo "-- mode: $(grep -q -- '--data-only' "$DEFAULTS" && echo 'data only (no sound on the Pi)' || \
+        (grep -q -- '--native-sound' "$DEFAULTS" && echo 'native sound on the Pi' || echo 'sound on the Pi'))"
 
     cat > "$UNIT" <<EOF
 [Unit]
@@ -141,6 +163,8 @@ RestartSec=3
 # thing the kernel kills if memory runs out
 Nice=-5
 OOMScoreAdjust=-500
+# the native player may run its audio thread at real-time priority (fewer dropouts under load)
+LimitRTPRIO=50
 
 [Install]
 WantedBy=multi-user.target
@@ -183,6 +207,7 @@ for a in "$@"; do
     case "$a" in
         --data-only) MODE=data ;;
         --with-sound) MODE=sound ;;
+        --native-sound) MODE=native ;;
         -*) echo "unknown option $a" >&2; exit 2 ;;
         *) CMD="$a" ;;
     esac
@@ -193,5 +218,5 @@ case "$CMD" in
     uninstall|remove) uninstall ;;
     status) systemctl --no-pager status "$NAME" ;;
     logs) journalctl -u "$NAME" -f -n 50 ;;
-    *) echo "usage: sudo $0 [install] [--data-only|--with-sound] | sudo $0 uninstall | $0 [status|logs]" >&2; exit 2 ;;
+    *) echo "usage: sudo $0 [install] [--data-only|--native-sound|--with-sound] | sudo $0 uninstall | $0 [status|logs]" >&2; exit 2 ;;
 esac

@@ -103,12 +103,27 @@ static void everySoundPlaysCleanly(const std::string& fx) {
     }
 }
 
+// hosts resend their settings: the same sound again must not reset its gearbox
+static void sameSoundAgainKeepsTheGearbox() {
+    Engine e(48000);
+    e.setSound(Sound::HYPERCAR);
+    std::vector<float> l(256), r(256);
+    Inputs in;
+    in.pedal = 0.3f;
+    for (int b = 0; b < 2000; ++b) { in.speedMs = std::fmin(20.f, b * 0.02f); e.render(in, l.data(), r.data(), 256); }
+    int gear = e.readout().gear;
+    e.setSound(Sound::HYPERCAR);
+    e.render(in, l.data(), r.data(), 256);
+    CHECK(gear > 1 && e.readout().gear == gear, "same sound reset the gearbox (%d -> %d)", gear, e.readout().gear);
+}
+
 int main(int argc, char** argv) {
     std::string fx = argc > 1 ? argv[1] : "";
     gearboxGentleNeverHuntsOverAnyRevRange();
     gearboxFlooredBouncesOffTheLimiter();
     gearboxColdIdleSettles();
     testDriveReaches100AndStops();
+    sameSoundAgainKeepsTheGearbox();
     everySoundPlaysCleanly(fx);
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

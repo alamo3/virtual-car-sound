@@ -45,6 +45,12 @@ if ! git merge --ff-only --quiet "origin/$branch" 2>/dev/null; then
 fi
 log "updated $(git rev-parse --short "$old") -> $(git log -1 --format='%h %s')"
 
+# the native player: rebuild it when its code changed (only where it's been built)
+if [ -d "$DIR/soundcore/build" ] && ! git diff --quiet "$old" "$new" -- soundcore; then
+    log "soundcore changed: rebuilding the native player"
+    timeout 900 cmake --build "$DIR/soundcore/build" -j2 >/dev/null 2>&1 || log "  (rebuild failed: keeping the old player)"
+fi
+
 if ! git diff --quiet "$old" "$new" -- requirements.txt; then
     log "requirements.txt changed: installing Python packages"
     timeout 600 "$DIR/.venv/bin/python" -m pip install -q -r requirements.txt \

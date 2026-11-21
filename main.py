@@ -1184,8 +1184,9 @@ def run_headless(args, settings, link):
         raise SystemExit(75)
 
 
-def run_data_only(args, settings, link):
-    """No sound: read the car and send its data to the phone over Bluetooth LE."""
+def run_data_only(args, settings, link, native=None):
+    """No sound in Python: read the car and send its data to the phone over Bluetooth LE --
+    and, with native (--native-sound), to the native sound player on the Pi as well."""
     t0 = time.monotonic()
 
     def log(msg):
@@ -1195,15 +1196,28 @@ def run_data_only(args, settings, link):
     link.start()
     engine = DataEngine(settings, link, log=log)
     import ble_control
-    control = ble_control.ControlServer(engine, list(VOICES), save_settings, log=log)
+    voices = list(VOICES)
+    if native is not None:
+        import native_sound
+        native.log = log
+        engine.native = native
+        voices = list(native_sound.SOUNDS)        # what the phone can pick from
+        if settings.voice not in native_sound.SOUNDS:
+            settings.voice = native_sound.DEFAULT_SOUND
+        native.start()
+    control = ble_control.ControlServer(engine, voices, save_settings, log=log)
     control.start()
 
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
 
-    log("running data only (no sound): car -> phone over Bluetooth; Ctrl+C / SIGTERM to stop")
+    log("running: car -> " + ("the native sound player and " if native else "") +
+        "the phone over Bluetooth; Ctrl+C / SIGTERM to stop")
     period, next_t, last_log, last_ping, errors = 0.02, time.monotonic(), 0.0, 0.0, 0
+    last_stamp = None
+    if native is not None:
+        period = 0.004               # look for new readings often: the player plays them at once
     restart_reason = None
     sd_notify("READY=1")
     sd_notify("STATUS=data only: sending car data to the phone")
@@ -1212,6 +1226,14 @@ def run_data_only(args, settings, link):
             now = time.monotonic()
             try:
                 engine.tick(now)
+                if native is not None:
+                    # each new reading to the player as soon as it's here (as to the phone)
+                    r = engine.reader
+                    stamp = getattr(r, "updated_at", None) if r is not None else None
+                    if stamp != last_stamp:
+                        last_stamp = stamp
+                        native.telemetry(control._telemetry())
+                    native.settings(settings)
                 errors = 0
             except Exception as e:      # one bad tick must not stop the data
                 errors += 1
@@ -1237,6 +1259,8 @@ def run_data_only(args, settings, link):
         sd_notify("STOPPING=1")
         control.stop()
         link.stop()
+        if native is not None:
+            native.stop()
     if restart_reason:
         log(f"{restart_reason}: restarting")
         raise SystemExit(75)
@@ -1288,6 +1312,11 @@ def main():
                     help="no sound: just read the car and send its data to the phone over "
                          "Bluetooth LE (Open Blue plays the sound). Implies --headless --car "
                          "--bluetooth; needs no speaker, so it runs on a Pi Zero 2 W")
+    hl.add_argument("--native-sound", action="store_true",
+                    help="the Pi plays the sound with the native engine (soundcore/: the same "
+                         "sounds as Open Blue) to --output-device (default: the first USB sound "
+                         "card), and still sends the car's data to the phone. Implies --headless "
+                         "--car --bluetooth")
     hl.add_argument("--demo", action="store_true",
                     help="with --headless and no --car: loop a scripted 40 s drive")
     ap.add_argument("--output-device", default=None,
@@ -1320,18 +1349,21 @@ def main():
                         effects=args.effects, cruise_quiet=args.cruise_quiet,
                         idle_hum=max(0.0, min(1.0, args.idle_hum)),
                         virtual_gears=args.virtual_gears)
-    if args.data_only:
+    if args.data_only or args.native_sound:
         args.headless = args.car = args.bluetooth = True
     if args.rpm_every is None:
-        args.rpm_every = 8 if args.data_only else 4
+        args.rpm_every = 8 if (args.data_only or args.native_sound) else 4
     if args.bluetooth or args.headless:   # the phone's last settings win over the defaults
         load_settings(settings)
     # data only: the phone needs the battery block just to spot reverse, so at speed it is
     # read about once a second instead of holding up the pedal several times a second
     link = CarLink(args.port, args.rpm_every,
-                   cruise_every=DATA_ONLY_CRUISE_EVERY if args.data_only else None) \
+                   cruise_every=DATA_ONLY_CRUISE_EVERY if (args.data_only or args.native_sound) else None) \
         if args.car else None
-    if args.data_only:
+    if args.native_sound:
+        import native_sound
+        run_data_only(args, settings, link, native=native_sound.NativeSound(args.output_device))
+    elif args.data_only:
         run_data_only(args, settings, link)
     elif args.headless:
         run_headless(args, settings, link)
