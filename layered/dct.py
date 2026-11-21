@@ -130,7 +130,7 @@ class Dct:
                 up_ready = self.limiter_t >= self.LIMITER_HOLD_SEC if pedal >= self.LIMITER_PEDAL \
                     else here >= self.up_rpm(self.pedal_avg)
                 if g < len(RATIOS) and self.hold <= 0 and not slowing and not lifting and up_ready \
-                        and self.gear_rpm(g + 1, kmh) >= self.lug_rpm(self.pedal_avg) * 0.9:
+                        and self.gear_rpm(g + 1, kmh) >= self.lug_rpm(self.pedal_avg) * 1.1:   # lands clear of the downshift line
                     target = g + 1
                 elif g > 1:
                     lower = self.gear_rpm(g - 1, kmh)

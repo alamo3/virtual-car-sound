@@ -20,8 +20,13 @@ Random events (rates rise with speed / acceleration / load)
   waves     subspace pressure waves: a deep, slow boom rolling through
   arcs      energy arcing across the field under heavy load: brief sparse crackle
 Driving events
-  jump      a deep, fast press winds the field up (a rising swell) and jumps: a boom, a flash
-            of noise, a long tail
+  launch    pulling away hard from (nearly) a standstill: the field inflates (~1.2 s: the deep
+            bubble swells and climbs, noise draws in, the shimmer builds), then -- still on the
+            pedal -- punches through: a sub drop, a flash, the tunnel opening as a sweep up,
+            and a burst of star streaks flying out to both sides. Lift before the punch and
+            the field deflates instead
+  jump      a deep, fast press when already moving winds the field up (a rising swell) and
+            jumps: a boom, a flash of noise, a long tail
   collapse  a quick lift lets the field go: a falling whoosh
   drop out  braking down through ~20 km/h drops out of warp: a falling sweep and a thump
   width     the stereo field opens with speed
@@ -65,6 +70,72 @@ def add(out, i, sig_l, sig_r):
     if m > 0:
         out[i:i + m, 0] += sig_l[:m]
         out[i:i + m, 1] += sig_r[:m]
+
+
+LAUNCH_PEDAL, LAUNCH_MAX_KMH = 0.75, 15.0      # as Open Blue's EV launch
+INFLATE_SEC = 1.2
+
+
+def streak(rng, dur, p0):
+    """One star streak: a whistling band falling in pitch, swept from p0 across the field."""
+    m = int(dur * SR)
+    t = np.arange(m) / m
+    fc = rng.uniform(900, 4200) * lerp(1.35, 0.65, t)
+    band = dsp.biquad(dsp.white(m, int(rng.integers(1 << 30))), "bp", fc, 7.0)
+    sig = (band + np.sin(2 * np.pi * np.cumsum(fc * 0.5) / SR) * 0.25) * np.sin(np.pi * t) ** 3
+    pan = lerp(p0, 1 - p0, t)
+    return sig * pan, sig * (1 - pan)
+
+
+def launch_events(out, c, kmh, pedal, rate, rng):
+    """The launch from rest: inflate, then punch through (or deflate if the pedal comes off).
+    Returns the sample indices of launches, so the generic jump can stand aside."""
+    n = len(out)
+    starts = []
+    last = -10 * SR
+    cand = np.nonzero((pedal[1:] >= LAUNCH_PEDAL) & (pedal[:-1] < LAUNCH_PEDAL) & (kmh[1:] < LAUNCH_MAX_KMH))[0]
+    for i in cand:
+        if i - last < 4 * SR:
+            continue
+        last = i
+        starts.append(i)
+        mi = int(INFLATE_SEC * SR)
+        t = np.arange(mi) / mi
+        grow = t ** 2
+        bubble = np.sin(2 * np.pi * np.cumsum(lerp(30.0, 56.0, t)) / SR) * grow * 0.9
+        draw = dsp.biquad(dsp.white(mi, int(rng.integers(1 << 30))), "bp", lerp(200.0, 2600.0, t), 1.2) * grow * 0.35
+        shimmer = dsp.biquad(dsp.white(mi, int(rng.integers(1 << 30))), "hp", 5000.0) * t ** 3 * 0.12
+        inflate = bubble + draw + shimmer
+        add(out, i, inflate, inflate)
+        j = i + mi
+        if j >= n:
+            continue
+        if pedal[j] > 0.7:                                   # still on it: punch through
+            mp = int(2.2 * SR)
+            tp = np.arange(mp) / SR
+            sub = np.sin(2 * np.pi * np.cumsum(lerp(90.0, 28.0, tp / 0.8)) / SR) * (1 - np.exp(-tp / 0.008)) * np.exp(-tp / 0.6)
+            flash = dsp.biquad(dsp.white(mp, int(rng.integers(1 << 30))), "bp", 3000.0, 0.6) * np.exp(-tp / 0.12)
+            tunnel = dsp.biquad(dsp.pink(mp, int(rng.integers(1 << 30))), "bp", lerp(200.0, 4000.0, tp / 1.6), 1.0)
+            tunnel *= np.sin(np.pi * np.clip(tp / 2.2, 0, 1)) ** 1.5
+            punch = sub * 1.0 + flash * 0.35 + tunnel * 0.35
+            add(out, j, punch, dsp.biquad(punch, "peak", 2500.0, 1.0, -2.0))
+            for k in range(10):                              # star burst, outward both ways
+                at = j + int(rng.uniform(0.0, 1.2) * SR)
+                left_first = k % 2 == 0
+                l, r = streak(rng, rng.uniform(0.25, 0.6), 0.5)
+                if left_first:
+                    l, r = l * 1.6, r * 0.4
+                else:
+                    l, r = l * 0.4, r * 1.6
+                g = rng.uniform(0.04, 0.09)
+                add(out, at, l * g, r * g)
+        else:                                                # let go: the field deflates
+            md = int(1.0 * SR)
+            td = np.arange(md) / SR
+            deflate = (np.sin(2 * np.pi * np.cumsum(lerp(56.0, 24.0, td / 1.0)) / SR) * 0.8
+                       + dsp.biquad(dsp.white(md, int(rng.integers(1 << 30))), "bp", lerp(2000.0, 200.0, td), 1.0) * 0.3) * np.exp(-td / 0.35)
+            add(out, j, deflate, deflate)
+    return starts
 
 
 def render(c: dict, seed: int = 4) -> np.ndarray:
@@ -173,8 +244,9 @@ def render(c: dict, seed: int = 4) -> np.ndarray:
         p = rng.uniform(0.2, 0.8)
         add(out, i, arc * p, arc * (1 - p))
 
-    # --- jump on a deep fast press; collapse on a quick lift; drop out braking --------------
+    # --- launch from rest; jump on a deep fast press; collapse on a lift; drop out braking --
     rate = np.gradient(dsp.one_pole(pedal, 0.04)) * SR
+    launches = launch_events(out, c, kmh, pedal, rate, rng)
     ch_len = int(1.3 * SR)
     ts = np.arange(ch_len) / SR
     swell = (np.sin(2 * np.pi * np.cumsum(lerp(70.0, 700.0, (ts / 1.3) ** 2)) / SR) * 0.5
@@ -187,7 +259,7 @@ def render(c: dict, seed: int = 4) -> np.ndarray:
     jump = flash * 0.35 + tail * 0.35 + thud * 0.9
     last = -10 * SR
     for i in np.nonzero((pedal[1:] >= 0.6) & (pedal[:-1] < 0.6) & (rate[1:] > 2.0))[0]:
-        if i - last < 3 * SR:
+        if i - last < 3 * SR or any(abs(i - L) < 3 * SR for L in launches):   # a launch has it
             continue
         last = i
         add(out, i, swell * 0.22, swell * 0.22)
