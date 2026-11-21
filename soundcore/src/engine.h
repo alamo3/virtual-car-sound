@@ -67,6 +67,7 @@ public:
     void setVolume(float v) { volume_ = v; }
     void setGearshifts(bool on) { gearshifts_ = on; }
     void setActive(bool on) { active_ = on; }      // fades in / out (no clicks)
+    void skipChime() { chimed_ = true; }           // e.g. a host that already chimed, or switched sound mid-drive
     void startTestDrive();
     void stopTestDrive();
     bool testDriving() const { return testDrive_ != nullptr; }

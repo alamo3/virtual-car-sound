@@ -1,8 +1,8 @@
 # soundcore: the shared native sound engine
 
 One C++ implementation of the car's sound for every host: the Raspberry Pi's player
-(`sc_player`), Open Blue (through JNI, next), and offline rendering. Ported from Open Blue's
-Kotlin and checked against it (within 0.2 dB(A) over the standard test drive).
+(`sc_player`), Open Blue (through JNI), and offline rendering. Ported from Open Blue's Kotlin and
+checked against it (within 0.2 dB(A) over the standard test drive); the Kotlin copies are gone now.
 
 | file | what |
 | --- | --- |
@@ -23,6 +23,10 @@ On the Pi, `sudo ./install_service.sh --native-sound` builds it and runs `main.p
 --native-sound`: Python reads the car and serves the phone, and sends each reading and setting
 change to `sc_player` (`native_sound.py`). `effects/` is copied from Open Blue's assets by
 `sync_effects.sh` -- run it after changing them there.
+
+Open Blue builds `src/` into `libsoundcore_jni.so` from its own copy in
+`app/src/main/cpp/soundcore` (with `soundcore_jni.cpp` and `SoundCore.kt` as the bridge). This
+directory is the one to edit; `./sync_to_app.sh [path/to/open-blue-android]` copies it over.
 
 Player socket (`/tmp/vcs-sound.sock`, UNIX datagrams): the 10-byte car-data packet of
 `ble_control.py`, or a text command: `sound flat6|hypercar|turbofan|warp`, `volume 0..1`,
