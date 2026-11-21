@@ -34,7 +34,7 @@ def run(script=standard_script, seconds=52.0, idle=900.0, redline=7000.0):
     box = Dct(idle=idle, redline=redline)
     n = int(seconds * CONTROL_HZ)
     keys = ("t", "pedal", "kmh", "accel", "motor_rpm", "rpm", "gear", "load", "throttle", "shifting",
-            "overrun", "sport", "limiter", "engaged", "shifts", "downshifts", "lift_offs", "brake")
+            "overrun", "sport", "limiter", "cut", "engaged", "shifts", "downshifts", "lift_offs", "brake")
     out = {k: np.zeros(n) for k in keys}
     v = 0.0
     pedal = 0.0
@@ -60,7 +60,7 @@ def run(script=standard_script, seconds=52.0, idle=900.0, redline=7000.0):
         st = box.step(dt, kmh, pedal, motor_rpm=int(v * 3.6 * 77.5))
         row = dict(t=t, pedal=pedal, kmh=kmh, accel=acc, motor_rpm=v * 3.6 * 77.5, brake=brake, **{
             k: float(st[k]) for k in ("rpm", "gear", "load", "throttle", "shifting", "overrun", "sport",
-                                      "limiter", "engaged", "shifts", "downshifts", "lift_offs")})
+                                      "limiter", "cut", "engaged", "shifts", "downshifts", "lift_offs")})
         for k in keys:
             out[k][i] = row[k]
     return out
@@ -72,7 +72,7 @@ def to_audio_rate(ctrl: dict, sr: int) -> dict:
     ta = np.arange(n) / sr
     res = {}
     for k, v in ctrl.items():
-        if k in ("shifts", "downshifts", "lift_offs", "gear"):
+        if k in ("shifts", "downshifts", "lift_offs", "gear", "cut", "limiter"):
             idx = np.minimum((ta * CONTROL_HZ).astype(int), len(v) - 1)
             res[k] = v[idx]
         else:

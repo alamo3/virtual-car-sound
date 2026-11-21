@@ -23,6 +23,10 @@ class Dct:
     KICKDOWN_JUMP = 0.25          # pedal rise over ~0.3 s that counts as a kickdown request
     BRAKE_DECEL = 2.5             # m/s^2 off the pedal that counts as braking (regen alone is ~1.7)
     CLUTCH_CLOSE_SEC = 1.2
+    LIMITER_HZ = 12.0
+    LIMITER_PEDAL = 0.9           # floored: run into the limiter before upshifting...
+    LIMITER_HOLD_SEC = 0.3        # ...and bounce off it this long
+    LIMITER_DIP = 0.04
 
     def __init__(self, idle=900.0, redline=7000.0):
         self.idle, self.redline = idle, redline
@@ -46,6 +50,7 @@ class Dct:
         self.last_pedal = 0.0
         self.clutch_locked = False
         self.slip_t = 0.0
+        self.limiter_t = 0.0
         self.pedal_rate = 0.0
 
     # --- gear train --------------------------------------------------------------------
@@ -120,7 +125,11 @@ class Dct:
                 # no upshifts while slowing down (it would only come back down): coasting and
                 # braking stay in gear or go down
                 slowing = self.accel < -0.5 and pedal < 0.2
-                if g < len(RATIOS) and self.hold <= 0 and not slowing and here >= self.up_rpm(self.pedal_avg) \
+                lifting = self.pedal_rate < -1.5            # mid-lift: never upshift on the way off
+                # floored, it holds the gear into the rev limiter and bounces off it first
+                up_ready = self.limiter_t >= self.LIMITER_HOLD_SEC if pedal >= self.LIMITER_PEDAL \
+                    else here >= self.up_rpm(self.pedal_avg)
+                if g < len(RATIOS) and self.hold <= 0 and not slowing and not lifting and up_ready \
                         and self.gear_rpm(g + 1, kmh) >= self.lug_rpm(self.pedal_avg) * 0.9:
                     target = g + 1
                 elif g > 1:
@@ -161,9 +170,16 @@ class Dct:
         if kmh < 2:
             self.clutch_locked = False
             self.slip_t = 0.0
-        limiter = False
+        limiter = cut = False
         if target >= R:
-            target, limiter = R * (0.96 if int(self.since_shift * 24) % 2 else 1.0), pedal > 0.5
+            target, limiter = R, pedal > 0.5
+        if limiter:
+            self.limiter_t += dt
+            cut = int(self.limiter_t * self.LIMITER_HZ * 2) % 2 == 1
+            if cut:
+                target = R * (1 - self.LIMITER_DIP)
+        else:
+            self.limiter_t = 0.0
         shifting = 0.0
         blip = 0.0
         if self.shift_t > 0:
@@ -193,7 +209,7 @@ class Dct:
         else:
             self.pull_peak = 0.0
         overrun = 0.0 if engaged else min(1.0, (self.rpm - idle) / (R - idle) + 0.2)
-        return dict(rpm=self.rpm, gear=g, load=max(0.0, load), shifting=shifting, limiter=limiter,
+        return dict(rpm=self.rpm, gear=g, load=max(0.0, load), shifting=shifting, limiter=limiter, cut=cut,
                     overrun=overrun, sport=self.sport, throttle=self.pedal_t, shifts=self.shifts,
                     downshifts=self.downshifts, lift_offs=self.lift_offs, engaged=engaged,
                     up=self.shift_up and self.shift_t > 0)

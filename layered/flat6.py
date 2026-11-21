@@ -57,7 +57,6 @@ def render(c: dict, seed: int = 1) -> np.ndarray:
     rpm_n = np.clip((rpm - IDLE) / (REDLINE - IDLE), 0, 1)
     load = np.clip(c["load"], 0, 1)
     overrun = np.clip(c["overrun"], 0, 1)
-    cut = c["limiter"] > 0.5
 
     # --- exhaust ---------------------------------------------------------------------
     fire_hz = rpm / 20.0                     # 6 cylinders, 4-stroke: 3 firings per rev
@@ -73,7 +72,7 @@ def render(c: dict, seed: int = 1) -> np.ndarray:
     weak_bank = lerp(BANK_GAIN_LOW_REVS, BANK_GAIN_HIGH_REVS, rpm_n)
     # the ignition cut: an upshift's torque handover (deep at load), the limiter
     fire_amp = 1.0 - 0.85 * np.clip(c["shifting"], 0, 1) * (load > 0.3)
-    fire_amp = np.where(cut & (np.sin(2 * np.pi * dsp.phase(np.full(n, 11.0))) > 0), 0.15, fire_amp)
+    fire_amp = np.where(c["cut"] > 0.5, 0.12, fire_amp)          # the limiter's fuel cuts
     bright = np.clip(0.15 + 0.85 * load * (0.5 + 0.5 * rpm_n), 0, 1) * (1 - 0.6 * overrun)
 
     out = np.zeros((n, 2))

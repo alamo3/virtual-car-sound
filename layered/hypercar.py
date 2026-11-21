@@ -13,6 +13,7 @@ Layers
   spool     a high, breathy whistle that rises with revs at high load (turbine-like)
   air       road / wind rush rising with speed
   shift     the regular hydraulic shift sound on every shift; the core dips through it
+  limiter   floored, each gear bounces off the rev limiter before the upshift: a stutter
   regen     off the pedal while slowing: the motor whine descends with speed, a soft pad
             underneath
 """
@@ -95,6 +96,9 @@ def render(c: dict, seed: int = 2) -> np.ndarray:
     pad = sum(np.sin(2 * np.pi * dsp.phase(pad_f * r)) for r in (1.0, 1.5, 2.0)) / 3
     pad *= dsp.one_pole(overrun * np.clip(kmh / 20, 0, 1), 0.3) * 0.06
     out += pad[:, None] * 0.5
+
+    # --- the rev limiter: a quick dip on each of the gearbox's cuts, eased (as the app) ------
+    out *= dsp.one_pole(np.where(c["cut"] > 0.5, 0.35, 1.0), 0.004)[:, None]
 
     for ch in range(2):
         out[:, ch] = dsp.biquad(out[:, ch], "hp", 30.0)
