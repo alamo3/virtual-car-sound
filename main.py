@@ -570,9 +570,10 @@ class CarLink:
     RETRY_SEC = 2.0          # between connection attempts
     DEAD_AFTER_SEC = 10.0    # connected but no fresh data this long -> reopen the adapter
 
-    def __init__(self, port=None, rpm_every=4, log=print):
+    def __init__(self, port=None, rpm_every=4, log=print, cruise_every=None):
         self.port = port
         self.rpm_every = rpm_every
+        self.cruise_every = cruise_every
         self.log = log
         self.reader = None
         self.elm = None
@@ -592,7 +593,7 @@ class CarLink:
         except Exception:
             elm.close()
             raise
-        reader = obd.IoniqReader(elm, rpm_every=self.rpm_every)
+        reader = obd.IoniqReader(elm, rpm_every=self.rpm_every, cruise_every=self.cruise_every)
         reader.start()
         self.elm, self.reader = elm, reader
         self.log(f"car: adapter on {elm.port}, low-latency USB "
@@ -952,6 +953,7 @@ class DataEngine:
 # --- Front ends ----------------------------------------------------------------------------
 
 PI_BUFFER_FRAMES = 512
+DATA_ONLY_CRUISE_EVERY = 30      # battery-block reads above 15 km/h with --data-only (~1 s)
 
 
 def make_graph(args):
@@ -1324,7 +1326,11 @@ def main():
         args.rpm_every = 8 if args.data_only else 4
     if args.bluetooth or args.headless:   # the phone's last settings win over the defaults
         load_settings(settings)
-    link = CarLink(args.port, args.rpm_every) if args.car else None
+    # data only: the phone needs the battery block just to spot reverse, so at speed it is
+    # read about once a second instead of holding up the pedal several times a second
+    link = CarLink(args.port, args.rpm_every,
+                   cruise_every=DATA_ONLY_CRUISE_EVERY if args.data_only else None) \
+        if args.car else None
     if args.data_only:
         run_data_only(args, settings, link)
     elif args.headless:

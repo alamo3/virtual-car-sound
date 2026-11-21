@@ -869,12 +869,26 @@ class IoniqReader(threading.Thread):
     Every `rpm_every`-th cycle: the battery-module block (~95 ms). From it: motor rpm (to
     calibrate rpm-per-km/h), its SIGN (reverse), battery current (regen) and SOC.
     Plain attribute writes are atomic under the GIL, so no locking is needed.
+
+    That read holds up the next pedal reading by ~95 ms, so it is kept out of the way:
+      - while the pedal is moving (a tip-in or lift-off in progress) it waits, up to
+        PEDAL_DEFER_MAX cycles, so the press reaches the sound without a gap;
+      - above `cruise_kmh`, `cruise_every` (if set) replaces `rpm_every`: for --data-only,
+        where the phone only needs the block to spot reverse, which can't happen at speed.
     """
 
-    def __init__(self, elm: Elm327, rpm_every: int = 4, stale_after: float = 0.5):
+    PEDAL_MOVING = 1.0       # % pedal change between readings that counts as moving
+    PEDAL_DEFER_MAX = 12     # cycles (~0.4 s) the battery read may wait for the pedal
+
+    def __init__(self, elm: Elm327, rpm_every: int = 4, stale_after: float = 0.5,
+                 cruise_every: int | None = None, cruise_kmh: float = 15.0):
         super().__init__(daemon=True, name="ioniq-reader")
         self.elm = elm
         self.rpm_every = rpm_every
+        self.cruise_every = cruise_every
+        self.cruise_kmh = cruise_kmh
+        self._since_bms = 0
+        self._pedal_moving = False
         self.stale_after = stale_after
         self.pedal: float | None = None
         self.speed: float | None = None
@@ -897,12 +911,17 @@ class IoniqReader(threading.Thread):
     def poll_once(self):
         got = self.elm.read_vcu_fast()
         if "pedal" in got and "speed" in got:
+            self._pedal_moving = (self.pedal is not None
+                                  and abs(got["pedal"] - self.pedal) >= self.PEDAL_MOVING)
             self.speed = got["speed"]
             self.pedal = got["pedal"]
             self.updated_at = time.monotonic()
         else:
             self.errors += 1
-        if self.rpm_every and self._cycle % self.rpm_every == self.rpm_every - 1:
+        self._cycle += 1
+        self._since_bms += 1
+        if self._bms_due():
+            self._since_bms = 0
             vals = self.elm.read_hyundai("bms", "220101")
             # SPEED_1/2 are the two motor slots; a single-motor car leaves one at 0.
             rpms = [vals[k] for k in ("IONIQ5_DRIVE_MOTOR_SPEED_1",
@@ -914,7 +933,17 @@ class IoniqReader(threading.Thread):
                 self.battery_current = vals.get("IONIQ5_BATTERY_CURRENT")
                 self.soc = vals.get("IONIQ5_HVBAT_SOC")
                 self.rpm_at = time.monotonic()
-        self._cycle += 1
+
+    def _bms_due(self) -> bool:
+        if not self.rpm_every:
+            return False
+        every = self.rpm_every
+        if self.cruise_every and (self.speed or 0.0) > self.cruise_kmh:
+            every = self.cruise_every
+        if self._since_bms < every:
+            return False
+        # pedal on the move: let it through first, but not forever
+        return not self._pedal_moving or self._since_bms >= every + self.PEDAL_DEFER_MAX
 
     def run(self):
         count, t0 = 0, time.perf_counter()
