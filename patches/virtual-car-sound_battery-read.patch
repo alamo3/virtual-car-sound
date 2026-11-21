@@ -1,0 +1,137 @@
+From 69c133b3a6c93ee86babe625aaee49d78f4b913b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 21 Nov 2026 00:00:58 +0000
+Subject: [PATCH] Keep the slow battery read out of the pedal's way
+
+The battery-module block takes ~95 ms and holds up the next pedal reading.
+- IoniqReader postpones it while the pedal is moving (up to ~0.4 s), so a
+  tip-in or lift-off reaches the sound without a gap
+- --data-only reads it about once a second above 15 km/h: the phone only
+  needs it to spot reverse, which can't happen at speed
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WZ9JyYFXCL7LncKRyZJznk
+---
+ main.py | 12 +++++++++---
+ obd.py  | 35 ++++++++++++++++++++++++++++++++---
+ 2 files changed, 41 insertions(+), 6 deletions(-)
+
+diff --git a/main.py b/main.py
+index 7784cd7..7b81d74 100644
+--- a/main.py
++++ b/main.py
+@@ -570,9 +570,10 @@ class CarLink:
+     RETRY_SEC = 2.0          # between connection attempts
+     DEAD_AFTER_SEC = 10.0    # connected but no fresh data this long -> reopen the adapter
+ 
+-    def __init__(self, port=None, rpm_every=4, log=print):
++    def __init__(self, port=None, rpm_every=4, log=print, cruise_every=None):
+         self.port = port
+         self.rpm_every = rpm_every
++        self.cruise_every = cruise_every
+         self.log = log
+         self.reader = None
+         self.elm = None
+@@ -592,7 +593,7 @@ class CarLink:
+         except Exception:
+             elm.close()
+             raise
+-        reader = obd.IoniqReader(elm, rpm_every=self.rpm_every)
++        reader = obd.IoniqReader(elm, rpm_every=self.rpm_every, cruise_every=self.cruise_every)
+         reader.start()
+         self.elm, self.reader = elm, reader
+         self.log(f"car: adapter on {elm.port}, low-latency USB "
+@@ -952,6 +953,7 @@ class DataEngine:
+ # --- Front ends ----------------------------------------------------------------------------
+ 
+ PI_BUFFER_FRAMES = 512
++DATA_ONLY_CRUISE_EVERY = 30      # battery-block reads above 15 km/h with --data-only (~1 s)
+ 
+ 
+ def make_graph(args):
+@@ -1324,7 +1326,11 @@ def main():
+         args.rpm_every = 8 if args.data_only else 4
+     if args.bluetooth or args.headless:   # the phone's last settings win over the defaults
+         load_settings(settings)
+-    link = CarLink(args.port, args.rpm_every) if args.car else None
++    # data only: the phone needs the battery block just to spot reverse, so at speed it is
++    # read about once a second instead of holding up the pedal several times a second
++    link = CarLink(args.port, args.rpm_every,
++                   cruise_every=DATA_ONLY_CRUISE_EVERY if args.data_only else None) \
++        if args.car else None
+     if args.data_only:
+         run_data_only(args, settings, link)
+     elif args.headless:
+diff --git a/obd.py b/obd.py
+index ce1d14e..d40f667 100644
+--- a/obd.py
++++ b/obd.py
+@@ -869,12 +869,26 @@ class IoniqReader(threading.Thread):
+     Every `rpm_every`-th cycle: the battery-module block (~95 ms). From it: motor rpm (to
+     calibrate rpm-per-km/h), its SIGN (reverse), battery current (regen) and SOC.
+     Plain attribute writes are atomic under the GIL, so no locking is needed.
++
++    That read holds up the next pedal reading by ~95 ms, so it is kept out of the way:
++      - while the pedal is moving (a tip-in or lift-off in progress) it waits, up to
++        PEDAL_DEFER_MAX cycles, so the press reaches the sound without a gap;
++      - above `cruise_kmh`, `cruise_every` (if set) replaces `rpm_every`: for --data-only,
++        where the phone only needs the block to spot reverse, which can't happen at speed.
+     """
+ 
+-    def __init__(self, elm: Elm327, rpm_every: int = 4, stale_after: float = 0.5):
++    PEDAL_MOVING = 1.0       # % pedal change between readings that counts as moving
++    PEDAL_DEFER_MAX = 12     # cycles (~0.4 s) the battery read may wait for the pedal
++
++    def __init__(self, elm: Elm327, rpm_every: int = 4, stale_after: float = 0.5,
++                 cruise_every: int | None = None, cruise_kmh: float = 15.0):
+         super().__init__(daemon=True, name="ioniq-reader")
+         self.elm = elm
+         self.rpm_every = rpm_every
++        self.cruise_every = cruise_every
++        self.cruise_kmh = cruise_kmh
++        self._since_bms = 0
++        self._pedal_moving = False
+         self.stale_after = stale_after
+         self.pedal: float | None = None
+         self.speed: float | None = None
+@@ -897,12 +911,17 @@ class IoniqReader(threading.Thread):
+     def poll_once(self):
+         got = self.elm.read_vcu_fast()
+         if "pedal" in got and "speed" in got:
++            self._pedal_moving = (self.pedal is not None
++                                  and abs(got["pedal"] - self.pedal) >= self.PEDAL_MOVING)
+             self.speed = got["speed"]
+             self.pedal = got["pedal"]
+             self.updated_at = time.monotonic()
+         else:
+             self.errors += 1
+-        if self.rpm_every and self._cycle % self.rpm_every == self.rpm_every - 1:
++        self._cycle += 1
++        self._since_bms += 1
++        if self._bms_due():
++            self._since_bms = 0
+             vals = self.elm.read_hyundai("bms", "220101")
+             # SPEED_1/2 are the two motor slots; a single-motor car leaves one at 0.
+             rpms = [vals[k] for k in ("IONIQ5_DRIVE_MOTOR_SPEED_1",
+@@ -914,7 +933,17 @@ class IoniqReader(threading.Thread):
+                 self.battery_current = vals.get("IONIQ5_BATTERY_CURRENT")
+                 self.soc = vals.get("IONIQ5_HVBAT_SOC")
+                 self.rpm_at = time.monotonic()
+-        self._cycle += 1
++
++    def _bms_due(self) -> bool:
++        if not self.rpm_every:
++            return False
++        every = self.rpm_every
++        if self.cruise_every and (self.speed or 0.0) > self.cruise_kmh:
++            every = self.cruise_every
++        if self._since_bms < every:
++            return False
++        # pedal on the move: let it through first, but not forever
++        return not self._pedal_moving or self._since_bms >= every + self.PEDAL_DEFER_MAX
+ 
+     def run(self):
+         count, t0 = 0, time.perf_counter()
+-- 
+2.43.0
+

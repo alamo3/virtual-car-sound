@@ -1,0 +1,112 @@
+From e33ee47c529d3458c4c72aa10a05301be1d522ca Mon Sep 17 00:00:00 2001
+From: Omar Alam <alamo2@mcmaster.ca>
+Date: Sat, 21 Nov 2026 00:01:36 +0000
+Subject: [PATCH] Engine sound: react to the Pi's pedal sooner
+
+- Look ahead on the pedal as well as the speed: while it is being pressed, carry
+  it on by its velocity (60 % of the look-ahead, at most +35 % of travel), so a
+  tip-in reaches the sound sooner through Android Auto's delay. Presses only,
+  and it works from a standstill
+- EngineModel: with the car's pedal, load rises in ~17 ms (was ~33) and falls
+  in ~70 ms (was ~125)
+- LoopVoice: the baked sets' load glide is 30 ms going up (was 100 ms), 80 ms
+  coming down
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WZ9JyYFXCL7LncKRyZJznk
+---
+ .../alamo3/openblue/sound/EngineModel.kt      |  4 +--
+ .../github/alamo3/openblue/sound/LoopVoice.kt |  4 ++-
+ .../alamo3/openblue/sound/SoundController.kt  | 32 ++++++++++++++++++-
+ 3 files changed, 36 insertions(+), 4 deletions(-)
+
+diff --git a/app/src/main/java/io/github/alamo3/openblue/sound/EngineModel.kt b/app/src/main/java/io/github/alamo3/openblue/sound/EngineModel.kt
+index 40f0ff7..d950e6d 100644
+--- a/app/src/main/java/io/github/alamo3/openblue/sound/EngineModel.kt
++++ b/app/src/main/java/io/github/alamo3/openblue/sound/EngineModel.kt
+@@ -99,8 +99,8 @@ class EngineModel(
+         // Load follows quickly going up, more gently going down; faster still with the car's own
+         // pedal reading, which is already clean (no sensor noise to hide).
+         val targetLoad = if (engaged) max(rawLoad, 0.12f) else 0f
+-        val rise = if (pedal != null) 30f else 12f
+-        val fall = if (pedal != null) 8f else 5f
++        val rise = if (pedal != null) 60f else 12f     // ~17 ms with the car's pedal
++        val fall = if (pedal != null) 14f else 5f
+         load += (targetLoad - load) * min(1f, dt * if (targetLoad > load) rise else fall)
+         if (engaged) pullPeak = max(pullPeak, load)
+ 
+diff --git a/app/src/main/java/io/github/alamo3/openblue/sound/LoopVoice.kt b/app/src/main/java/io/github/alamo3/openblue/sound/LoopVoice.kt
+index 19eb516..ab0561d 100644
+--- a/app/src/main/java/io/github/alamo3/openblue/sound/LoopVoice.kt
++++ b/app/src/main/java/io/github/alamo3/openblue/sound/LoopVoice.kt
+@@ -369,7 +369,9 @@ class LoopVoice(
+         bakedSpeed = if (bakedSpeed < 0f) tSpeed else bakedSpeed + (tSpeed - bakedSpeed) * min(1f, dt / 0.08f)
+         // the load as it falls (not the on/off "engaged" flag), glided: lifting or pressing
+         // crossfades cruise <-> accelerating loops instead of switching
+-        bakedLoad += (tLoad.coerceIn(0f, 1f) - bakedLoad) * min(1f, dt / 0.1f)
++        // (quick going up -- that's the press you feel -- gentler coming down)
++        val loadT = tLoad.coerceIn(0f, 1f)
++        bakedLoad += (loadT - bakedLoad) * min(1f, dt / if (loadT > bakedLoad) 0.03f else 0.08f)
+         val pedalNow = bakedLoad
+         // the grid position: road speed, or for a jet its spool
+         val v = s.spool?.step(pedalNow, dt) ?: bakedSpeed
+diff --git a/app/src/main/java/io/github/alamo3/openblue/sound/SoundController.kt b/app/src/main/java/io/github/alamo3/openblue/sound/SoundController.kt
+index 0daf3d8..18347a9 100644
+--- a/app/src/main/java/io/github/alamo3/openblue/sound/SoundController.kt
++++ b/app/src/main/java/io/github/alamo3/openblue/sound/SoundController.kt
+@@ -86,6 +86,13 @@ class SoundController(
+     @Volatile private var muted = false
+     private val clickTimes = java.util.concurrent.ConcurrentLinkedQueue<Long>()
+ 
++    private companion object {
++        /** How much of the look-ahead the pedal gets (its moves are less predictable than speed). */
++        const val PEDAL_LOOKAHEAD = 0.6f
++        /** The most the pedal may run ahead of the real one (0..1 of travel). */
++        const val PEDAL_LEAD_MAX = 0.35f
++    }
++
+     @Volatile var readout: SoundReadout? = null
+         private set
+     val running: Boolean get() = audioThread != null
+@@ -284,6 +291,9 @@ class SoundController(
+         var sinceReadout = 0f
+         var prevAccel = 0f
+         var jerk = 0f
++        var lastPedal = -1f
++        var lastPedalAt = 0L
++        var pedalVel = 0f
+         track.play()
+         try {
+             while (true) {
+@@ -301,7 +311,27 @@ class SoundController(
+                 val waitingForPi = usePi && piOnly && car == null
+                 val speedNow = car?.let { it.speedKmh / 3.6f } ?: fusedSpeed
+                 // Reversing out of a spot isn't "accelerating": keep the sound at idle.
+-                val pedal = car?.let { if (it.reversing) 0f else it.pedal }
++                val pedalNow = car?.let { if (it.reversing) 0f else it.pedal }
++                // Pedal velocity, from each new reading the Pi sends (~25 a second).
++                if (car != null && pedalNow != null && car.at != lastPedalAt) {
++                    val pdt = (car.at - lastPedalAt) / 1000f
++                    pedalVel = if (lastPedal >= 0f && pdt in 0.005f..0.2f) (pedalNow - lastPedal) / pdt else 0f
++                    lastPedal = pedalNow
++                    lastPedalAt = car.at
++                } else if (car == null) {
++                    lastPedal = -1f
++                    pedalVel = 0f
++                }
++                // Look ahead on the pedal too: a press takes 0.1-0.3 s of travel, so carrying it on
++                // lets the sound get there sooner. Presses only (a lift is never anticipated), and
++                // capped, so a quick dab to part throttle can't sound like flooring it. Unlike the
++                // speed, this works from a standstill: that's when a launch most needs it.
++                val pedal = pedalNow?.let { p ->
++                    if (pedalVel > 0.5f) {
++                        val lead = (pedalVel * lookaheadMs / 1000f * PEDAL_LOOKAHEAD).coerceAtMost(PEDAL_LEAD_MAX)
++                        minOf(1f, p + lead)
++                    } else p
++                }
+                 // Look ahead: extend the current trend in acceleration by the output delay.
+                 val a = if (car != null) (if (car.reversing) 0f else pi.accel) else fusedAccel
+                 jerk += ((a - prevAccel) / dt - jerk) * minOf(1f, dt / 0.12f)
+-- 
+2.43.0
+
