@@ -77,7 +77,7 @@ def render(c: dict, seed: int = 3) -> np.ndarray:
     for h in range(6, FAN_BLADES):                      # shaft harmonics below the blade tone
         buzz += rng.uniform(0.3, 1.0) * np.sin(2 * np.pi * dsp.phase(shaft * h) + rng.uniform(0, 6.28))
     buzz_amt = np.clip((sp_n - 0.55) / 0.35, 0, 1)
-    fan_mix = fan * 0.09 * (0.3 + 0.7 * sp_n) + buzz * 0.012 * buzz_amt
+    fan_mix = fan * 0.09 * (0.5 + 0.5 * sp_n) + buzz * 0.012 * buzz_amt
     fan_mix = dsp.biquad(fan_mix, "lp", 6000.0)
     out[:, 0] += fan_mix * 0.55
     out[:, 1] += fan_mix * 0.45
@@ -88,10 +88,10 @@ def render(c: dict, seed: int = 3) -> np.ndarray:
 
     # --- rumble and roar ---------------------------------------------------------------------
     rumble = dsp.biquad(dsp.pink(n, seed + 1), "lp", lerp(90.0, 220.0, sp_n), 0.9)
-    rumble = dsp.biquad(rumble, "hp", 25.0)
-    out += (rumble * (0.12 + 0.55 * sp_n ** 2))[:, None] * np.array([0.5, 0.5])
+    rumble = dsp.biquad(rumble, "hp", 40.0)
+    out += (rumble * (0.10 + 0.25 * sp_n ** 2))[:, None] * np.array([0.5, 0.5])
     roar = np.stack([dsp.biquad(dsp.pink(n, seed + s), "bp", lerp(250.0, 900.0, sp_n), 0.5) for s in (2, 3)], 1)
-    out += roar * (0.03 + 0.42 * sp_n ** 3)[:, None]
+    out += roar * (0.08 + 0.37 * sp_n ** 3)[:, None]
 
     # --- afterburner -----------------------------------------------------------------------
     lit = ((pedal > BURNER_PEDAL) & (spool > BURNER_SPOOL)).astype(float)

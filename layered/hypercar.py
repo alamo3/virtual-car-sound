@@ -49,10 +49,10 @@ def render(c: dict, seed: int = 2) -> np.ndarray:
         tone = 0.6 * dsp.saw_bl(f * ratio) + 0.8 * dsp.pulse_bl(f * ratio * 2.0, 0.35)   # saw + pulse an octave up
         voice[:, 0] += tone * pan
         voice[:, 1] += tone * (1 - pan)
-    cutoff = lerp(350.0, 4200.0, 0.25 * rpm_n + 0.75 * load * (0.4 + 0.6 * rpm_n))
+    cutoff = lerp(650.0, 4200.0, 0.25 * rpm_n + 0.75 * load * (0.4 + 0.6 * rpm_n))
     for ch in range(2):
         voice[:, ch] = dsp.biquad(voice[:, ch], "lp", cutoff, 2.2)
-    core_level = (0.12 + 0.88 * load ** 1.2) * (0.6 + 0.4 * rpm_n) * (1 - 0.85 * overrun)
+    core_level = (0.38 + 0.62 * load ** 1.2) * (0.6 + 0.4 * rpm_n) * (1 - 0.85 * overrun)
     core_level *= 1 - 0.7 * np.clip(c["shifting"], 0, 1)
     out += voice * dsp.one_pole(core_level, 0.015)[:, None] * 0.45
 

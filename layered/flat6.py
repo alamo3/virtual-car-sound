@@ -91,15 +91,15 @@ def render(c: dict, seed: int = 1) -> np.ndarray:
     # pipes and muffler
     for ch in range(2):
         y = out[:, ch]
-        y = dsp.biquad(y, "peak", 92.0, 2.5, 5.0)              # tailpipe mode
+        y = dsp.biquad(y, "peak", 92.0, 2.5, 3.0)              # tailpipe mode
         y = dsp.biquad(y, "peak", 270.0, 2.0, 3.0)             # header / collector
-        mute = lerp(1400.0, 8000.0, load * (0.35 + 0.65 * rpm_n)) * (1 - 0.45 * overrun)
+        mute = lerp(2200.0, 8000.0, load * (0.35 + 0.65 * rpm_n)) * (1 - 0.45 * overrun)
         y = dsp.biquad(y, "lp", mute, 0.8)
         out[:, ch] = y
     # loudness: mostly load (a light cruise sits ~12 dB under full throttle); off the
     # throttle the exhaust falls right back to a burble
-    level = (0.15 + 0.85 * load ** 1.3) * (0.55 + 0.45 * rpm_n)
-    level = level * (1 - overrun) + 0.07 * overrun * (0.4 + 0.6 * rpm_n)
+    level = (0.45 + 0.55 * load ** 1.3) * (0.55 + 0.45 * rpm_n)
+    level = level * (1 - overrun) + 0.10 * overrun * (0.4 + 0.6 * rpm_n)
     out *= dsp.one_pole(level, 0.02)[:, None]
 
     # --- intake --------------------------------------------------------------------------
@@ -136,6 +136,6 @@ def render(c: dict, seed: int = 1) -> np.ndarray:
 
     # --- in the cabin: a little weight, the top softened -------------------------------
     for ch in range(2):
-        out[:, ch] = dsp.biquad(out[:, ch], "lowshelf", 140.0, 0.7, 3.0)
+        out[:, ch] = dsp.biquad(out[:, ch], "lowshelf", 140.0, 0.7, 1.0)
         out[:, ch] = dsp.biquad(out[:, ch], "hp", 28.0, 0.7)
     return np.tanh(out * 1.6) / 1.6
