@@ -24,8 +24,8 @@ class Dct:
     BRAKE_DECEL = 2.5             # m/s^2 off the pedal that counts as braking (regen alone is ~1.7)
     CLUTCH_CLOSE_SEC = 1.2
     LIMITER_HZ = 12.0
-    LIMITER_PEDAL = 0.9           # floored: run into the limiter before upshifting...
-    LIMITER_HOLD_SEC = 0.3        # ...and bounce off it this long
+    LIMITER_PEDAL = 0.8           # floored (80 %+): run into the limiter before upshifting...
+    LIMITER_HOLD_SEC = 0.5        # ...and bounce off it this long (~6 cuts)
     LIMITER_DIP = 0.04
 
     def __init__(self, idle=900.0, redline=7000.0):
