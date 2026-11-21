@@ -10,7 +10,7 @@ endif()
 
 add_library(soundcore STATIC
   src/dct.cpp src/voices.cpp src/flat6.cpp src/hypercar.cpp src/jet.cpp src/warp.cpp
-  src/effects.cpp src/engine.cpp)
+  src/effects.cpp src/engine.cpp src/tires.cpp)
 target_include_directories(soundcore PUBLIC src)
 target_compile_options(soundcore PRIVATE -Wall -Wextra)
 

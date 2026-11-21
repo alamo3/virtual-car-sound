@@ -117,6 +117,34 @@ static void sameSoundAgainKeepsTheGearbox() {
     CHECK(gear > 1 && e.readout().gear == gear, "same sound reset the gearbox (%d -> %d)", gear, e.readout().gear);
 }
 
+// the tires: silent driving straight, at a parking-lot crawl and in an ordinary bend; scrub and
+// then a squeal as the cornering force nears the limit at speed, loudest on the outside of the turn
+static void tiresSquealOnlyHardAndFast() {
+    auto measure = [](float kmh, float lateral, double& outL, double& outR) {
+        Tires t(48000);
+        std::vector<float> l(256), r(256);
+        double el = 0, er = 0;
+        for (int b = 0; b < 400; ++b) {
+            std::fill(l.begin(), l.end(), 0.f); std::fill(r.begin(), r.end(), 0.f);
+            t.render(l.data(), r.data(), 256, lateral, kmh / 3.6f, 0.8f);
+            if (b >= 200) for (int i = 0; i < 256; ++i) { el += l[i] * l[i]; er += r[i] * r[i]; }
+        }
+        outL = 10 * std::log10(el / (200 * 256) + 1e-12); outR = 10 * std::log10(er / (200 * 256) + 1e-12);
+        return t.squeal();
+    };
+    double l, r;
+    measure(80, 0, l, r);          CHECK(l < -100 && r < -100, "tires straight: %.0f dB", l);
+    measure(10, 7, l, r);          CHECK(l < -100, "tires at a crawl: %.0f dB", l);
+    measure(60, 2.5f, l, r);       CHECK(l < -100, "tires in an ordinary bend (0.25 g): %.0f dB", l);
+    float sq = measure(60, 3.9f, l, r);
+    std::printf("tires 0.4 g at 60: squeal %.2f, %.1f / %.1f dB\n", sq, l, r);
+    sq = measure(80, 7.f, l, r);
+    std::printf("tires 0.7 g at 80 left: squeal %.2f, %.1f / %.1f dB\n", sq, l, r);
+    CHECK(sq > 0.9f, "tires at 0.7 g: squeal only %.2f", sq);
+    CHECK(r > l + 3, "cornering left, the outside (right) tires should be louder: %.1f / %.1f", l, r);
+    CHECK(r > -16 && r < -8, "tire squeal level %.1f dB", r);
+}
+
 int main(int argc, char** argv) {
     std::string fx = argc > 1 ? argv[1] : "";
     gearboxGentleNeverHuntsOverAnyRevRange();
@@ -124,6 +152,7 @@ int main(int argc, char** argv) {
     gearboxColdIdleSettles();
     testDriveReaches100AndStops();
     sameSoundAgainKeepsTheGearbox();
+    tiresSquealOnlyHardAndFast();
     everySoundPlaysCleanly(fx);
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

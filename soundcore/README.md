@@ -9,6 +9,7 @@ checked against it (within 0.2 dB(A) over the standard test drive); the Kotlin c
 | `src/dsp.h` | the real-time DSP kit (biquads, resonators, PolyBLEP, table sine, noise) |
 | `src/dct.*` | the 7-speed dual-clutch gearbox and its control unit; revving in place |
 | `src/flat6.cpp` `hypercar.cpp` `jet.cpp` `warp.cpp` | the four layered voices |
+| `src/tires.*` | the tires in hard corners: scrub, then a squeal, from the cornering force (speed x yaw rate) at speed |
 | `src/effects.*` | chime, launches, the hard-shift sound, reverse (WAVs from `effects/`) |
 | `src/engine.*` | the one entry point: car inputs in, stereo out, per block (plus hill effort, the test drive, the output stage) |
 | `tools/player.cpp` | `sc_player`: the engine to an ALSA device, fed over a local socket |
