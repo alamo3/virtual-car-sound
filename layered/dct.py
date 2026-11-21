@@ -27,6 +27,8 @@ class Dct:
     LIMITER_PEDAL = 0.8           # floored (80 %+): run into the limiter before upshifting...
     LIMITER_HOLD_SEC = 0.5        # ...and bounce off it this long (~6 cuts)
     LIMITER_DIP = 0.04
+    COLD_IDLE, COLD_IDLE_SEC, IDLE_WANDER_RPM = 0.35, 20.0, 20.0     # as Dct.kt
+    POWER_FLARE, LAUNCH_FLARE = 0.05, 0.06
 
     def __init__(self, idle=900.0, redline=7000.0):
         self.idle, self.redline = idle, redline
@@ -51,6 +53,10 @@ class Dct:
         self.clutch_locked = False
         self.slip_t = 0.0
         self.limiter_t = 0.0
+        self.age = 0.0
+        self.idle_rng = __import__("random").Random(7)
+        self.idle_from = self.idle_to = 0.0
+        self.idle_phase = 1.0
         self.pedal_rate = 0.0
 
     # --- gear train --------------------------------------------------------------------
@@ -75,7 +81,15 @@ class Dct:
         return lerp(self.idle * 1.25, 0.40 * self.redline, p) * lerp(1.0, 1.25, self.sport)
 
     def step(self, dt, kmh, pedal, motor_rpm=0):
-        R, idle = self.redline, self.idle
+        R = self.redline
+        # idle: fast just after starting, settling over a minute, never perfectly steady
+        self.age += dt
+        self.idle_phase += dt / 1.2
+        if self.idle_phase >= 1:
+            self.idle_phase -= 1
+            self.idle_from, self.idle_to = self.idle_to, self.idle_rng.random() * 2 - 1
+        wander = self.idle_from + (self.idle_to - self.idle_from) * (0.5 - 0.5 * math.cos(math.pi * self.idle_phase))
+        idle = self.idle * (1 + self.COLD_IDLE * math.exp(-self.age / self.COLD_IDLE_SEC)) + self.IDLE_WANDER_RPM * wander
         # learn the car's own motor-rpm per km/h (whenever the Pi sends a new reading)
         if motor_rpm and motor_rpm != self.last_motor and kmh > 15:
             self.motor_per_kmh += (abs(motor_rpm) / kmh - self.motor_per_kmh) * 0.1
@@ -163,7 +177,8 @@ class Dct:
                 # Gently, the revs settle toward a little over idle as it bites; under power it
                 # holds the launch rpm and the car catches up (it never stalls the engine)
                 bite = max(wheel, idle * 1.3)
-                held = launch - (launch - bite) * smoothstep(closing) * (1 - pedal)
+                flare = 1 + self.LAUNCH_FLARE * pedal * max(0.0, 1 - self.slip_t / 0.3)   # clutch takes up
+                held = (launch - (launch - bite) * smoothstep(closing) * (1 - pedal)) * flare
                 target = max(target, held)
                 if wheel >= 0.98 * held:
                     self.clutch_locked = True
@@ -191,8 +206,9 @@ class Dct:
                 self.rpm = self.shift_from_rpm + (target - self.shift_from_rpm) * k
             else:
                 blip = math.sin(math.pi * min(1, frac / 0.7))
-                over = 1 + lerp(0.03, 0.08, self.sport) * blip * (1 - self.pedal_t)
-                self.rpm = (self.shift_from_rpm + (target - self.shift_from_rpm) * k) * over
+                # the shift lands this far above the new gear; inertia then settles it back
+                over = lerp(0.03, 0.08, self.sport) * (1 - self.pedal_t) + self.POWER_FLARE * self.pedal_t
+                self.rpm = self.shift_from_rpm + (target * (1 + over) - self.shift_from_rpm) * k
             self.shift_t -= dt
         else:
             self.rpm += (target - self.rpm) * min(1, dt / 0.06)
