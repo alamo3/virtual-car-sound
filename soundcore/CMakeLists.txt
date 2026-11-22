@@ -13,6 +13,14 @@ add_library(soundcore STATIC
   src/effects.cpp src/engine.cpp src/tires.cpp)
 target_include_directories(soundcore PUBLIC src)
 target_compile_options(soundcore PRIVATE -Wall -Wextra)
+# built on the Pi itself: tune for its processor (NEON on a Pi 3 / 4 / 5 running 32-bit Raspberry Pi OS)
+include(CheckCXXCompilerFlag)
+if(NOT CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64)")
+  check_cxx_compiler_flag("-mcpu=native" HAVE_MCPU_NATIVE)
+  if(HAVE_MCPU_NATIVE)
+    target_compile_options(soundcore PUBLIC -mcpu=native)
+  endif()
+endif()
 
 # offline: render a drive to WAV and report levels and speed
 add_executable(sc_render tools/render.cpp)

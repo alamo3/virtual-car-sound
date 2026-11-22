@@ -1363,7 +1363,8 @@ def main():
         if args.car else None
     if args.native_sound:
         import native_sound
-        run_data_only(args, settings, link, native=native_sound.NativeSound(args.output_device))
+        run_data_only(args, settings, link,
+                      native=native_sound.NativeSound(args.output_device, gearshifts=args.virtual_gears))
     elif args.data_only:
         run_data_only(args, settings, link)
     elif args.headless:

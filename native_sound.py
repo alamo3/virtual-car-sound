@@ -43,8 +43,11 @@ def usb_card() -> str | None:
 
 
 class NativeSound:
-    def __init__(self, device: str | None = None, log=print):
+    def __init__(self, device: str | None = None, log=print, gearshifts: bool = True):
         self.device = device
+        # the gearbox: on unless --no-virtual-gears. (Not the saved "virtual gears" setting: that
+        # belongs to the Python voices, and an old saved "off" would switch the gearbox off here.)
+        self.gearshifts = gearshifts
         self.log = log
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.proc: subprocess.Popen | None = None
@@ -114,7 +117,7 @@ class NativeSound:
         want = {
             "sound": SOUNDS.get(s.voice, SOUNDS[DEFAULT_SOUND]),
             "volume": f"{max(0.0, min(1.0, s.volume)):.2f}",
-            "gearshifts": "1" if s.virtual_gears else "0",
+            "gearshifts": "1" if self.gearshifts else "0",
         }
         # on a change -- and every couple of seconds anyway, so a player that has just
         # (re)started and missed the first ones catches up

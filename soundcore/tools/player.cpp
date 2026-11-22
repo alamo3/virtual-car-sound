@@ -2,7 +2,7 @@
 // a soundbar's USB input), fed by the Python process that reads the car.
 //
 //   sc_player [--socket /tmp/vcs-sound.sock] [--device default] [--effects DIR]
-//             [--sound flat6|hypercar|turbofan|warp] [--period 256] [--periods 3]
+//             [--sound flat6|hypercar|turbofan|warp] [--period 512] [--periods 3]
 //
 // On the socket (UNIX datagrams) it takes
 //   - the car's data: the same 10-byte packet the Pi sends the phone over Bluetooth
@@ -132,7 +132,7 @@ static snd_pcm_t* openPcm(const std::string& dev, unsigned& rate, snd_pcm_uframe
 
 int main(int argc, char** argv) {
     std::string sockPath = "/tmp/vcs-sound.sock", dev = "default", fx, soundName = "flat6";
-    snd_pcm_uframes_t period = 256;
+    snd_pcm_uframes_t period = 512;     // ~11 ms a period, 3 of them: ~32 ms of buffer, safe on a Pi
     unsigned periods = 3;
     for (int i = 1; i + 1 < argc; i += 2) {
         std::string k = argv[i], v = argv[i + 1];
@@ -175,6 +175,7 @@ int main(int argc, char** argv) {
     std::map<std::string, std::string> lastCmd;   // the last of each command, so repeats (settings resent every 2 s) aren't logged
     auto lastLog = Clock::now();
     double cpu = 0, audio = 0;
+    int underruns = 0;                  // the device ran dry (heard as a crackle / buzz): counted, reported every 5 s
 
     while (!g_stop) {
         // drain the socket: the latest car data, any commands
@@ -226,16 +227,16 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_until(due);
         }
         if (w < 0) {
-            if (w == -EPIPE) std::fprintf(stderr, "underrun\n");
+            if (w == -EPIPE) underruns++;
             if (snd_pcm_recover(pcm, (int)w, 1) < 0) { std::fprintf(stderr, "audio device lost: %s\n", snd_strerror((int)w)); break; }
         }
         if (std::chrono::duration<float>(Clock::now() - lastLog).count() >= 5.f) {
             lastLog = Clock::now();
             const Readout& ro = engine.readout();
-            std::fprintf(stderr, "%s | %3.0f km/h pedal %3.0f %% | gear %d %5.0f rpm%s%s | car %s, %d gaps (longest %.0f ms) | cpu %.1f %%\n",
+            std::fprintf(stderr, "%s | %3.0f km/h pedal %3.0f %% | gear %d %5.0f rpm%s%s | car %s, %d gaps (longest %.0f ms) | cpu %.1f %%, %d underruns\n",
                          info(engine.sound()).name, ro.kmh, car.pedal * 100, ro.gear, ro.rpm, ro.limiter ? " LIMITER" : "",
                          ro.testDrive ? (std::string(" | test drive: ") + ro.testDrive).c_str() : "",
-                         car.fresh() ? "live" : "no data", car.gaps, car.longestGap * 1000, 100.0 * cpu / std::max(audio, 1e-9));
+                         car.fresh() ? "live" : "no data", car.gaps, car.longestGap * 1000, 100.0 * cpu / std::max(audio, 1e-9), underruns);
             cpu = audio = 0;
         }
     }
