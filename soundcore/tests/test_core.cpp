@@ -99,7 +99,8 @@ static void everySoundPlaysCleanly(const std::string& fx) {
         CHECK(finite, "%s: not finite", info(snd).name);
         CHECK(peak > 0.05f && peak <= 0.891f, "%s: peak %.3f", info(snd).name, peak);
         CHECK(pull > cruise + 2, "%s: pull %.1f vs cruise %.1f", info(snd).name, pull, cruise);
-        CHECK(realtime > 15, "%s: only %.0fx real time", info(snd).name, realtime);
+        // the player needs 1x; 4x leaves room for the rest of the Pi (a Pi 3B+ runs these ~6-15x)
+        CHECK(realtime > 4, "%s: only %.1fx real time", info(snd).name, realtime);
     }
 }
 

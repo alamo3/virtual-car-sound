@@ -87,7 +87,8 @@ install() {
         apt-get install -y -qq cmake g++ libasound2-dev >/dev/null || echo "   (couldn't install the build tools: no network?)"
         sudo -u "$RUN_USER" cmake -S "$DIR/soundcore" -B "$DIR/soundcore/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
         sudo -u "$RUN_USER" cmake --build "$DIR/soundcore/build" -j2
-        sudo -u "$RUN_USER" "$DIR/soundcore/build/sc_tests" "$DIR/soundcore/effects" | tail -1
+        # the test results: each sound's level and speed (x real time), any failures, the verdict
+        sudo -u "$RUN_USER" "$DIR/soundcore/build/sc_tests" "$DIR/soundcore/effects" | sed 's/^/   /'
     fi
 
     # ffmpeg: reads the mp3 recordings some voices use (Raspberry Pi OS Lite lacks it);
