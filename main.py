@@ -1220,7 +1220,8 @@ def run_data_only(args, settings, link, native=None):
         period = 0.004               # look for new readings often: the player plays them at once
     restart_reason = None
     sd_notify("READY=1")
-    sd_notify("STATUS=data only: sending car data to the phone")
+    sd_notify("STATUS=native sound: playing on the Pi, sending car data to the phone" if native is not None
+              else "STATUS=data only: sending car data to the phone")
     try:
         while not stop.is_set():
             now = time.monotonic()

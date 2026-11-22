@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -171,7 +172,7 @@ int main(int argc, char** argv) {
     std::vector<float> l(frames), r(frames);
     std::vector<int16_t> pcmBuf(frames * 2);
     uint8_t msg[512];
-    std::string lastCmd[8];             // the last of each command, so repeats aren't logged
+    std::map<std::string, std::string> lastCmd;   // the last of each command, so repeats (settings resent every 2 s) aren't logged
     auto lastLog = Clock::now();
     double cpu = 0, audio = 0;
 
@@ -189,8 +190,7 @@ int main(int argc, char** argv) {
             else if (cmd == "testdrive") arg == "start" ? engine.startTestDrive() : engine.stopTestDrive();
             else if (cmd == "rev") rev = arg == "off" ? -1.f : std::clamp(std::stof(arg), 0.f, 1.f);
             else { std::fprintf(stderr, "unknown command: %s\n", text.c_str()); continue; }
-            int slot = (int)(std::hash<std::string>{}(cmd) % 8);
-            if (lastCmd[slot] != text) { lastCmd[slot] = text; std::fprintf(stderr, "command: %s\n", text.c_str()); }
+            if (lastCmd[cmd] != text) { lastCmd[cmd] = text; std::fprintf(stderr, "command: %s\n", text.c_str()); }
         }
         // the car's data while it's fresh; stale (car off, adapter gone), standing still
         const bool fresh = car.fresh();
