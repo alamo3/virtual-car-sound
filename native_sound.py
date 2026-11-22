@@ -50,6 +50,8 @@ class NativeSound:
         self.proc: subprocess.Popen | None = None
         self._stop = threading.Event()
         self._sent: dict[str, str] = {}          # last value sent per setting
+        self._playing_on: str | None = None      # the ALSA device the player was started on
+        self._last_card_check = 0.0
         self._thread = threading.Thread(target=self._keep_running, name="native-sound", daemon=True)
 
     def start(self):
@@ -70,6 +72,7 @@ class NativeSound:
     def _keep_running(self):
         while not self._stop.is_set():
             device = self.device or usb_card() or "default"
+            self._playing_on = device
             cmd = [str(PLAYER), "--socket", SOCKET, "--device", device, "--effects", str(EFFECTS)]
             self.log(f"native sound: starting the player on {device}")
             self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -81,6 +84,16 @@ class NativeSound:
                 break
             self.log(f"native sound: the player exited ({code}); restarting in 2 s")
             self._stop.wait(2.0)
+
+    def _check_card(self, now: float):
+        """A USB sound card plugged in (or found) after the player started: move the player to it."""
+        if self.device or now - self._last_card_check < 5.0:
+            return
+        self._last_card_check = now
+        card = usb_card()
+        if card and card != self._playing_on and self.proc and self.proc.poll() is None:
+            self.log(f"native sound: found {card}; moving the player to it")
+            self.proc.terminate()                # _keep_running starts it again, on the card
 
     # --- feeding it -------------------------------------------------------------------
     def _send(self, data: bytes):
@@ -106,6 +119,7 @@ class NativeSound:
         # on a change -- and every couple of seconds anyway, so a player that has just
         # (re)started and missed the first ones catches up
         now = time.monotonic()
+        self._check_card(now)
         resend = now - getattr(self, "_last_full", 0.0) >= 2.0
         if resend:
             self._last_full = now
