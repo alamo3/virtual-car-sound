@@ -10,8 +10,9 @@
 //   - commands, as text: "sound <name>", "volume <0..1>", "gearshifts <0|1>",
 //     "testdrive start|stop", "rev <0..1>" (revving in place; "rev off" to stop)
 // The speed arrives in whole km/h: it's smoothed, and the lag that adds taken back out with the
-// acceleration, as Open Blue does (PiLink). With no fresh data it fades out (car off, adapter
-// gone) and comes back when the data does.
+// acceleration, as Open Blue does (PiLink); between readings it carries on, and the pedal glides.
+// A short gap in the data holds the last reading; with none for 1.5 s (car off, adapter gone) it
+// fades out, and comes back when the data does.
 #include <alsa/asoundlib.h>
 #include <sched.h>
 #include <signal.h>
@@ -46,12 +47,16 @@ static bool soundByName(const std::string& n, Sound& out) {
 
 // the car's data as Open Blue's PiLink sees it: whole km/h smoothed, lag taken back out
 struct Car {
-    static constexpr float SPEED_SMOOTH_SEC = 0.15f, STALE_SEC = 0.5f;
+    // the car's readings come ~30 a second: through a gap up to HOLD_SEC the last one is held (an
+    // OBD retry shouldn't drop the sound); between readings the speed carries on for up to CARRY_SEC
+    static constexpr float SPEED_SMOOTH_SEC = 0.15f, HOLD_SEC = 1.5f, CARRY_SEC = 0.25f, GAP_SEC = 0.25f;
     float speedKmh = 0, pedal = 0, accel = 0, smooth = -1;
     int motorRpm = 0;
     bool reversing = false, piFresh = false;
     float lastRaw = -1;
-    Clock::time_point lastAt{}, lastPacket{};
+    Clock::time_point lastAt{}, lastFresh{};
+    int gaps = 0;
+    float longestGap = 0;
 
     void packet(const uint8_t* b) {
         auto now = Clock::now();
@@ -60,6 +65,11 @@ struct Car {
         pedal = std::min(1.f, b[4] / 200.f);
         motorRpm = (int16_t)(b[5] | b[6] << 8);
         piFresh = flags & 1;
+        if (piFresh) {
+            float gap = std::chrono::duration<float>(now - lastFresh).count();
+            if (lastFresh != Clock::time_point{} && gap > GAP_SEC && gap < 60.f) { gaps++; longestGap = std::max(longestGap, gap); }
+            lastFresh = now;
+        }
         reversing = flags & 2;
         if (lastRaw >= 0) {
             float dt = std::chrono::duration<float>(now - lastAt).count();
@@ -72,10 +82,16 @@ struct Car {
             smooth = raw;
         }
         lastRaw = raw;
-        lastAt = lastPacket = now;
+        lastAt = now;
         speedKmh = raw < 0.5f ? 0.f : std::max(0.f, smooth + accel * 3.6f * SPEED_SMOOTH_SEC);
     }
-    bool fresh() const { return piFresh && std::chrono::duration<float>(Clock::now() - lastPacket).count() < STALE_SEC; }
+    bool fresh() const { return lastFresh != Clock::time_point{} && std::chrono::duration<float>(Clock::now() - lastFresh).count() < HOLD_SEC; }
+    // the speed now: the latest reading carried on at the current acceleration
+    float speedNow() const {
+        if (speedKmh <= 0.f) return 0.f;
+        float age = std::min(CARRY_SEC, std::chrono::duration<float>(Clock::now() - lastAt).count());
+        return std::max(0.f, speedKmh + accel * 3.6f * age);
+    }
 };
 
 static int openSocket(const std::string& path) {
@@ -149,7 +165,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "sound: %s, effects from %s\n", info(engine.sound()).name, fx.c_str());
 
     Car car;
-    float rev = -1.f;
+    float rev = -1.f, pedalGlide = -1.f;
+    const float glideK = 1.f - std::exp(-(float)period / rate / 0.03f);   // the pedal glides between readings (~30 ms)
     const int frames = (int)period;
     std::vector<float> l(frames), r(frames);
     std::vector<int16_t> pcmBuf(frames * 2);
@@ -179,11 +196,15 @@ int main(int argc, char** argv) {
         const bool fresh = car.fresh();
         Inputs in;
         if (fresh) {
-            in.pedal = car.reversing ? 0.f : car.pedal;
-            in.speedMs = car.speedKmh / 3.6f;
+            float p = car.reversing ? 0.f : car.pedal;
+            pedalGlide = pedalGlide < 0.f ? p : pedalGlide + (p - pedalGlide) * glideK;
+            in.pedal = pedalGlide;
+            in.speedMs = car.speedNow() / 3.6f;
             in.accel = car.reversing ? 0.f : car.accel;
             in.motorRpm = car.motorRpm;
             in.reversing = car.reversing;
+        } else {
+            pedalGlide = -1.f;
         }
         in.revThrottle = rev;
         engine.setActive(fresh || engine.testDriving() || rev >= 0.f);
@@ -211,10 +232,10 @@ int main(int argc, char** argv) {
         if (std::chrono::duration<float>(Clock::now() - lastLog).count() >= 5.f) {
             lastLog = Clock::now();
             const Readout& ro = engine.readout();
-            std::fprintf(stderr, "%s | %3.0f km/h pedal %3.0f %% | gear %d %5.0f rpm%s%s | car %s | cpu %.1f %%\n",
+            std::fprintf(stderr, "%s | %3.0f km/h pedal %3.0f %% | gear %d %5.0f rpm%s%s | car %s, %d gaps (longest %.0f ms) | cpu %.1f %%\n",
                          info(engine.sound()).name, ro.kmh, car.pedal * 100, ro.gear, ro.rpm, ro.limiter ? " LIMITER" : "",
                          ro.testDrive ? (std::string(" | test drive: ") + ro.testDrive).c_str() : "",
-                         car.fresh() ? "live" : "no data", 100.0 * cpu / std::max(audio, 1e-9));
+                         car.fresh() ? "live" : "no data", car.gaps, car.longestGap * 1000, 100.0 * cpu / std::max(audio, 1e-9));
             cpu = audio = 0;
         }
     }
