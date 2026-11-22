@@ -12,10 +12,18 @@ scans for the service, connects and talks over three characteristics:
                                    then "#end")
              status                send the status now
              testdrive start|stop  with --native-sound: a scripted drive (0-100-0 km/h)
+             gearshifts 0|1        with --native-sound: the native engine's gearbox
+             rev <0..1>|off        with --native-sound: rev in place (the app's Rev slider)
+           (with --native-sound, "voice" picks one of the native sounds: Flat-6, Hypercar,
+           Turbofan, Warp bubble)
   STATUS   read + notify, JSON, about once a second:
              {"v": voice, "vol": volume, "kmh": speed, "info": engine line,
               "car": data fresh?, "fx": .., "ss": .., "vg": .., "cq": .., "ih": ..,
-              "msg": last problem, e.g. a voice that failed to load ("" when all is well)}
+              "msg": last problem, e.g. a voice that failed to load ("" when all is well),
+              with --native-sound also "nat": {"gears": gearbox on, "g": gear, "rpm", "kmh",
+              "lim": limiter, "td": test drive stage or "", "ur": underruns, "cpu": %,
+              "live": car data} -- "nat" is {"gears"} alone until the player reports; the
+              sounds are on LIST ("voices"))
   LIST     notify: the voice list, as above
   TELEMETRY  notify, as soon as each new reading arrives from the car (~25-30 a second;
            at least 25 a second even without one), 10 bytes little-endian -- the car's data,
@@ -201,10 +209,22 @@ class ControlServer:
                 return "no test drive: the Pi isn't playing the sound"
             native.command(f"testdrive {'stop' if arg.strip() == 'stop' else 'start'}")
             return "ok"
-        if cmd == "voice":
+        if cmd in ("gearshifts", "rev"):
+            native = getattr(self.engine, "native", None)
+            if native is None:
+                return f"no {cmd}: the Pi isn't playing the sound"
+            if cmd == "rev":                     # momentary, not saved
+                a = arg.strip()
+                native.command("rev off" if a == "off" else f"rev {max(0.0, min(1.0, float(a))):.2f}")
+                return None
+            s.native_gears = arg.strip() in ("1", "true", "on")
+        elif cmd == "voice":
             if arg not in self.voices:
                 return f"unknown voice {arg!r}"
-            s.voice = arg
+            if getattr(self.engine, "native", None) is not None:
+                s.native_sound = arg
+            else:
+                s.voice = arg
         elif cmd == "volume":
             s.volume = max(0.0, min(1.0, float(arg)))
         elif cmd == "set":
@@ -248,8 +268,15 @@ class ControlServer:
     def _status(self) -> bytes:
         e, s = self.engine, self.engine.settings
         info = (e.info or "").strip()
-        st = {"v": s.voice, "vol": round(s.volume, 2), "kmh": round(e.speed, 1),
+        native = getattr(e, "native", None)
+        st = {"v": s.native_sound if native is not None else s.voice, "vol": round(s.volume, 2), "kmh": round(e.speed, 1),
               "info": info[:60], "car": bool(e.fresh), "fx": s.effects, "ss": s.small_speaker,
               "vg": s.virtual_gears, "cq": s.cruise_quiet, "ih": round(s.idle_hum, 2),
               "msg": (getattr(e, "message", "") or "")[:120]}
+        if native is not None:
+            nat = {"gears": bool(s.native_gears)}
+            p = native.status()
+            if p:
+                nat.update({k: p[k] for k in ("g", "rpm", "kmh", "lim", "td", "ur", "cpu", "live") if k in p})
+            st["nat"] = nat
         return json.dumps(st, separators=(",", ":")).encode("utf-8")

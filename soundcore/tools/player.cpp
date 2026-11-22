@@ -173,7 +173,8 @@ int main(int argc, char** argv) {
     std::vector<int16_t> pcmBuf(frames * 2);
     uint8_t msg[512];
     std::map<std::string, std::string> lastCmd;   // the last of each command, so repeats (settings resent every 2 s) aren't logged
-    auto lastLog = Clock::now();
+    auto lastLog = Clock::now(), lastState = Clock::now();
+    double cpuWin = 0, audioWin = 0;    // cpu over the last state report
     double cpu = 0, audio = 0;
     int underruns = 0;                  // the device ran dry (heard as a crackle / buzz): counted, reported every 5 s
 
@@ -216,8 +217,9 @@ int main(int argc, char** argv) {
             pcmBuf[2 * i] = (int16_t)std::lround(std::clamp(l[i], -1.f, 1.f) * 32767);
             pcmBuf[2 * i + 1] = (int16_t)std::lround(std::clamp(r[i], -1.f, 1.f) * 32767);
         }
-        cpu += std::chrono::duration<double>(Clock::now() - t0).count();
-        audio += (double)frames / rate;
+        double spent = std::chrono::duration<double>(Clock::now() - t0).count();
+        cpu += spent; cpuWin += spent;
+        audio += (double)frames / rate; audioWin += (double)frames / rate;
         snd_pcm_sframes_t w = snd_pcm_writei(pcm, pcmBuf.data(), frames);
         if (dev == "null") {                     // the null device doesn't wait: keep real time (a test bench)
             static auto start = Clock::now();
@@ -229,6 +231,16 @@ int main(int argc, char** argv) {
         if (w < 0) {
             if (w == -EPIPE) underruns++;
             if (snd_pcm_recover(pcm, (int)w, 1) < 0) { std::fprintf(stderr, "audio device lost: %s\n", snd_strerror((int)w)); break; }
+        }
+        // the state, for the phone's remote (via native_sound.py): a JSON line on stdout, 4 a second
+        if (std::chrono::duration<float>(Clock::now() - lastState).count() >= 0.25f) {
+            lastState = Clock::now();
+            const Readout& ro = engine.readout();
+            std::printf("{\"snd\":\"%s\",\"g\":%d,\"rpm\":%.0f,\"kmh\":%.1f,\"lim\":%d,\"td\":\"%s\",\"ur\":%d,\"cpu\":%.1f,\"live\":%d}\n",
+                        info(engine.sound()).name, ro.gear, ro.rpm, ro.kmh, ro.limiter ? 1 : 0, ro.testDrive ? ro.testDrive : "",
+                        underruns, 100.0 * cpuWin / std::max(audioWin, 1e-9), car.fresh() ? 1 : 0);
+            std::fflush(stdout);
+            cpuWin = audioWin = 0;
         }
         if (std::chrono::duration<float>(Clock::now() - lastLog).count() >= 5.f) {
             lastLog = Clock::now();

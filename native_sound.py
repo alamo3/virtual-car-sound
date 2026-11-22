@@ -54,6 +54,8 @@ class NativeSound:
         self._stop = threading.Event()
         self._sent: dict[str, str] = {}          # last value sent per setting
         self._playing_on: str | None = None      # the ALSA device the player was started on
+        self.state: dict = {}                    # the player's latest state (sc_player's stdout)
+        self.state_at = 0.0
         self._last_card_check = 0.0
         self._thread = threading.Thread(target=self._keep_running, name="native-sound", daemon=True)
 
@@ -78,8 +80,9 @@ class NativeSound:
             self._playing_on = device
             cmd = [str(PLAYER), "--socket", SOCKET, "--device", device, "--effects", str(EFFECTS)]
             self.log(f"native sound: starting the player on {device}")
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self._sent.clear()                   # a fresh player: send every setting again
+            threading.Thread(target=self._read_state, args=(self.proc,), name="native-state", daemon=True).start()
             for line in self.proc.stderr:        # its log lines, into ours
                 self.log(f"player: {line.rstrip()}")
             code = self.proc.wait()
@@ -87,6 +90,20 @@ class NativeSound:
                 break
             self.log(f"native sound: the player exited ({code}); restarting in 2 s")
             self._stop.wait(2.0)
+
+    def _read_state(self, proc):
+        """The player's state, a JSON line on stdout a few times a second: for the phone's remote."""
+        import json
+        for line in proc.stdout:
+            try:
+                self.state = json.loads(line)
+                self.state_at = time.monotonic()
+            except ValueError:
+                pass
+
+    def status(self) -> dict | None:
+        """The player's latest state, if it's recent (gear, rpm, km/h, limiter, test drive, underruns, cpu)."""
+        return self.state if time.monotonic() - self.state_at < 2.0 else None
 
     def _check_card(self, now: float):
         """A USB sound card plugged in (or found) after the player started: move the player to it."""
@@ -99,30 +116,42 @@ class NativeSound:
             self.proc.terminate()                # _keep_running starts it again, on the card
 
     # --- feeding it -------------------------------------------------------------------
-    def _send(self, data: bytes):
+    def _send(self, data: bytes) -> bool:
         try:
             self.sock.sendto(data, SOCKET)
+            return True
         except OSError:
-            pass                                 # not up yet (or restarting): the next one gets through
+            return False                         # not up yet (or restarting)
 
     def telemetry(self, packet: bytes):
         """A reading of the car: the 10-byte packet the phone gets."""
         self._send(packet)
 
     def command(self, text: str):
-        self._send(text.encode("utf-8"))
+        """A one-off command (a test drive, revving): held until the player can take it."""
+        if not self._flush() or not self._send(text.encode("utf-8")):
+            self._pending = (getattr(self, "_pending", []) + [text])[-5:]
+
+    def _flush(self) -> bool:
+        pending = getattr(self, "_pending", [])
+        while pending:
+            if not self._send(pending[0].encode("utf-8")):
+                return False
+            pending.pop(0)
+        return True
 
     def settings(self, s):
         """Sends the settings that changed (the sound, volume, gearshifts) -- cheap to call often."""
         want = {
-            "sound": SOUNDS.get(s.voice, SOUNDS[DEFAULT_SOUND]),
+            "sound": SOUNDS.get(s.native_sound, SOUNDS[DEFAULT_SOUND]),
             "volume": f"{max(0.0, min(1.0, s.volume)):.2f}",
-            "gearshifts": "1" if self.gearshifts else "0",
+            "gearshifts": "1" if (self.gearshifts and s.native_gears) else "0",
         }
         # on a change -- and every couple of seconds anyway, so a player that has just
         # (re)started and missed the first ones catches up
         now = time.monotonic()
         self._check_card(now)
+        self._flush()
         resend = now - getattr(self, "_last_full", 0.0) >= 2.0
         if resend:
             self._last_full = now

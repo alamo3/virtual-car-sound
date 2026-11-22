@@ -684,13 +684,16 @@ class Settings:
     reverse_test: bool = False
     idle_hum: float = 0.0          # level kept at a standstill after the fade (0 = silent)
     volume: float = 1.0            # master volume (the phone app's slider)
+    # --native-sound: the native engine's own sound and gearbox (not the Python voices')
+    native_sound: str = "Flat-6"
+    native_gears: bool = True
 
 
 # Settings the phone changes are saved here and restored at the next start, so the car
 # comes up the way it was left. Only the fields below are stored.
 SETTINGS_FILE = Path.home() / ".config" / "virtual-car-sound" / "settings.json"
 SAVED_FIELDS = ("voice", "volume", "effects", "small_speaker", "virtual_gears", "cruise_quiet",
-                "idle_hum")
+                "idle_hum", "native_sound", "native_gears")
 
 
 def sd_notify(message: str):
@@ -1202,8 +1205,8 @@ def run_data_only(args, settings, link, native=None):
         native.log = log
         engine.native = native
         voices = list(native_sound.SOUNDS)        # what the phone can pick from
-        if settings.voice not in native_sound.SOUNDS:
-            settings.voice = native_sound.DEFAULT_SOUND
+        if settings.native_sound not in native_sound.SOUNDS:
+            settings.native_sound = native_sound.DEFAULT_SOUND
         native.start()
     control = ble_control.ControlServer(engine, voices, save_settings, log=log)
     control.start()
