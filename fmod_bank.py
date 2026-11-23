@@ -349,7 +349,7 @@ JET_PROFILES = {
             "sim/cockpit2/engine/actuators/throttle_ratio[0]": "throttle",
             "sim/flightmodel/position/indicated_airspeed": "speed_kts",
         },
-        "idle_frac": 0.55, "max_rad": 1520.0, "up_per_sec": 0.16, "down_per_sec": 0.22,
+        "idle_frac": 0.55, "max_rad": 1520.0, "up_per_sec": 0.4, "down_per_sec": 0.5,
     },
     "f15a": {
         "loops": ["Engine", "EngineRocket", "Afterburner"],     # EngineJetLiner: whoosh
@@ -363,7 +363,7 @@ JET_PROFILES = {
             "sim/cockpit2/gauges/indicators/airspeed_kts_pilot": "speed_kts",
             "xpevent_rel_heading": "const:180",
         },
-        "idle_frac": 0.62, "max_rad": 1.0, "up_per_sec": 0.14, "down_per_sec": 0.2,
+        "idle_frac": 0.62, "max_rad": 1.0, "up_per_sec": 0.38, "down_per_sec": 0.5,
         "afterburner_pedal": 0.9,
         # launch (hard pedal stab from low speed): the plane's sonic boom. The event booms
         # ~2.5 s after Mach 1 (the shock reaching a ground observer), too late for a launch,

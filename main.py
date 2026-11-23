@@ -139,6 +139,82 @@ CAR_SPEED_SMOOTH_SEC = 0.15
 CAR_PEDAL_SMOOTH_SEC = 0.05
 
 
+def device_output_volume_alsa(card, log=print):
+    """Set a selected ALSA card's playback volume to 90%; return whether it worked.
+
+    card is an ALSA card number or ID (for example, 1 or "Audio"), not a PCM
+    device string such as "plughw:CARD=Audio".
+    """
+    import subprocess
+
+    for control in ("Headphone", "Speaker", "Master"):
+        try:
+            result = subprocess.run(
+                ["amixer", "-c", str(card), "sget", control],
+                capture_output=True, text=True, check=False,
+            )
+            capabilities = next((line.split(":", 1)[1].split()
+                                 for line in result.stdout.splitlines()
+                                 if line.strip().startswith("Capabilities:")), [])
+            if result.returncode or "pvolume" not in capabilities:
+                continue
+            # Use alsamixer's perceptual mapping so its display also reads 90%.
+            command = ["amixer", "-M", "-c", str(card), "sset", control, "90%"]
+            if "pswitch" in capabilities:
+                command.append("unmute")
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            log(f"audio: could not run amixer: {exc}")
+            return False
+        if result.returncode:
+            log(f"audio: could not set {control} on ALSA card {card}: "
+                f"{result.stderr.strip() or 'amixer failed'}")
+            return False
+        levels = [line.strip() for line in result.stdout.splitlines()
+                  if "Playback" in line and "[" in line]
+        log(f"audio: requested 90% mapped volume on ALSA card {card} {control}"
+            + (f"; {'; '.join(levels)}" if levels else ""))
+        return True
+
+    log(f"audio: no supported playback volume control found on ALSA card {card}")
+    return False
+
+
+def set_usb_output_volume(device, log=print):
+    """Resolve a selected output to a USB ALSA card and set its playback volume."""
+    import re
+
+    if not device or device.lower() == "default":
+        log("audio: cannot identify an ALSA card for the default output; volume unchanged")
+        return
+    try:
+        lines = Path("/proc/asound/cards").read_text().splitlines()
+    except OSError as exc:
+        log(f"audio: cannot read ALSA cards; volume unchanged: {exc}")
+        return
+
+    cards = []
+    for line in lines:
+        match = re.match(r"\s*(\d+)\s+\[([^]]+)\]\s*:\s*(.*)", line)
+        if match and "usb-audio" in match.group(3).lower():
+            number, card_id, description = match.groups()
+            cards.append((number, card_id.strip(), description.split(" - ", 1)[-1].strip()))
+
+    card_match = re.search(r"(?:^|[:,])CARD=([^,\s]+)", device, re.IGNORECASE)
+    hw_match = re.search(r"\b(?:plug)?hw:([^,()\s]+)(?:[,)]|$)", device, re.IGNORECASE)
+    if card_match or hw_match:
+        identifier = (card_match or hw_match).group(1).lower()
+        matches = [card for card in cards if identifier in (card[0].lower(), card[1].lower())]
+    else:
+        name = device.lower()
+        matches = [card for card in cards if card[2] and card[2].lower() in name]
+
+    if len(matches) == 1:
+        device_output_volume_alsa(matches[0][1], log=log)
+    else:
+        log(f"audio: could not uniquely match output {device!r} to a USB ALSA card; "
+            "volume unchanged")
+
 
 def _modulation_envelope(mono, sr, window_sec=0.012):
     """Slow amplitude envelope of the loop, normalised to mean 1.
@@ -671,6 +747,8 @@ class _LinkReader:
         return getattr(self.link.reader or _NoData, name)
 
 
+
+
 # --- Engine: everything between inputs and the speaker, shared by GUI and headless --------
 
 @dataclass
@@ -983,7 +1061,9 @@ def make_graph(args):
         PI_BUFFER_FRAMES if platform.machine() in ("aarch64", "armv7l", "armv6l") else None)
     if size:
         config.output_buffer_size = size
-    return AudioGraph(config)
+    graph = AudioGraph(config)
+    set_usb_output_volume(graph.output_device_name or config.output_device_name)
+    return graph
 
 
 def run_gui(args, settings, link):
@@ -1192,6 +1272,8 @@ def run_data_only(args, settings, link, native=None):
     and, with native (--native-sound), to the native sound player on the Pi as well."""
     t0 = time.monotonic()
 
+
+
     def log(msg):
         print(f"[{time.monotonic() - t0:6.1f}s] {msg}", flush=True)
 
@@ -1367,7 +1449,8 @@ def main():
     if args.native_sound:
         import native_sound
         run_data_only(args, settings, link,
-                      native=native_sound.NativeSound(args.output_device, gearshifts=args.virtual_gears))
+                      native=native_sound.NativeSound(args.output_device, gearshifts=args.virtual_gears,
+                                                      set_output_volume=set_usb_output_volume))
     elif args.data_only:
         run_data_only(args, settings, link)
     elif args.headless:

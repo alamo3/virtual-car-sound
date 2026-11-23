@@ -43,8 +43,10 @@ def usb_card() -> str | None:
 
 
 class NativeSound:
-    def __init__(self, device: str | None = None, log=print, gearshifts: bool = True):
+    def __init__(self, device: str | None = None, log=print, gearshifts: bool = True,
+                 set_output_volume=None):
         self.device = device
+        self.set_output_volume = set_output_volume
         # the gearbox: on unless --no-virtual-gears. (Not the saved "virtual gears" setting: that
         # belongs to the Python voices, and an old saved "off" would switch the gearbox off here.)
         self.gearshifts = gearshifts
@@ -78,6 +80,8 @@ class NativeSound:
         while not self._stop.is_set():
             device = self.device or usb_card() or "default"
             self._playing_on = device
+            if self.set_output_volume:
+                self.set_output_volume(device, log=self.log)
             cmd = [str(PLAYER), "--socket", SOCKET, "--device", device, "--effects", str(EFFECTS)]
             self.log(f"native sound: starting the player on {device}")
             self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

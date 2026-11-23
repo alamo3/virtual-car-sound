@@ -46,9 +46,11 @@ def slug(name: str) -> str:
 
 def seamless(x: np.ndarray, n: int) -> np.ndarray:
     """Crossfade the last n samples into the first n (equal power) and drop the tail."""
-    r = np.sin(np.linspace(0, np.pi / 2, n)) ** 2
+    # equal power (sin / cos): the end and the start are different sound, so an amplitude
+    # crossfade (sin^2 / 1 - sin^2) would dip ~3 dB in the middle of every loop wrap
+    a = np.linspace(0, np.pi / 2, n)
     y = x[:-n].copy()
-    y[:n] = x[:n] * r + x[-n:] * (1 - r)
+    y[:n] = x[:n] * np.sin(a) + x[-n:] * np.cos(a)
     return y
 
 
@@ -139,6 +141,11 @@ def export(name: str, out: Path):
     d.mkdir(parents=True, exist_ok=True)
     states = render_states(name)
     loops = {k: seamless(resample(x, GRAPH_SR, SR), int(XFADE_SEC * SR)) for k, x in states.items()}
+    # headroom: the equal-power seam can add up to 3 dB; scale the whole set together (the app
+    # sets the voice's loudness itself) so nothing clips when written
+    top = max(float(np.abs(x).max()) for x in loops.values())
+    if top > 0.98:
+        loops = {k: x * (0.98 / top) for k, x in loops.items()}
     info = {"name": name, "key": "speed", "speeds": SPEEDS, "cylinders": 2, "idle_rpm": 0,
             "redline_rpm": 1, "sample_rate": SR, "tone": False, "raw_level": True,
             "coast_is_light": True, "off": [], "shift_up": None, "shift_down": None, "pops": []}
