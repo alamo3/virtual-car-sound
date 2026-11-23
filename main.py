@@ -1267,6 +1267,48 @@ def run_headless(args, settings, link):
         raise SystemExit(75)
 
 
+class BackgroundUpdate:
+    """Keeps trying to update from GitHub after the start, for a Pi whose Wi-Fi comes up late.
+
+    The service updates once as it starts (update.sh, ExecStartPre) but gives the network only a
+    few seconds: at boot Wi-Fi is often not connected yet, and the update is skipped. This
+    tries again every RETRY_SEC for a while once running; an update that comes down applies at
+    the next start -- straight away if the car isn't sending data (parked), never mid-drive.
+    """
+    RETRY_SEC, TRIES = 60.0, 30
+
+    def __init__(self, log):
+        self.log = log
+        self.pending = False             # updated: a restart applies it
+        self._stop = threading.Event()
+
+    def start(self):
+        threading.Thread(target=self._run, name="update", daemon=True).start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        import subprocess
+        script = Path(__file__).resolve().parent / "update.sh"
+        for _ in range(self.TRIES):
+            if self._stop.wait(self.RETRY_SEC):
+                return
+            try:
+                out = subprocess.run([str(script)], capture_output=True, text=True, timeout=1500).stdout
+            except (OSError, subprocess.TimeoutExpired) as e:
+                self.log(f"update: couldn't run update.sh ({e})")
+                return
+            if "offline" in out:
+                continue                 # no network yet: try again later
+            for line in out.strip().splitlines():
+                self.log(line)
+            if "update: updated" in out:
+                self.pending = True
+                self.log("update: applies at the next start (now, if the car is off)")
+            return
+
+
 def run_data_only(args, settings, link, native=None):
     """No sound in Python: read the car and send its data to the phone over Bluetooth LE --
     and, with native (--native-sound), to the native sound player on the Pi as well."""
@@ -1304,6 +1346,9 @@ def run_data_only(args, settings, link, native=None):
     if native is not None:
         period = 0.004               # look for new readings often: the player plays them at once
     restart_reason = None
+    updater = BackgroundUpdate(log)
+    updater.start()
+    quiet_since = time.monotonic()      # since when the car has sent no data (for applying an update)
     sd_notify("READY=1")
     sd_notify("STATUS=native sound: playing on the Pi, sending car data to the phone" if native is not None
               else "STATUS=data only: sending car data to the phone")
@@ -1334,6 +1379,14 @@ def run_data_only(args, settings, link, native=None):
             if args.log_every and now - last_log >= args.log_every:
                 last_log = now
                 log(f"{engine.status().strip()}   | {engine.car_summary()}")
+            # an update came down while running: apply it once the car has been quiet a minute
+            # (parked, not driving, no test drive) -- a restart, which takes a few seconds
+            testing = native is not None and bool((native.status() or {}).get("td"))
+            if engine.fresh or testing:
+                quiet_since = now
+            elif updater.pending and now - quiet_since > 60.0:
+                restart_reason = "applying the update"
+                break
             next_t += period
             delay = next_t - time.monotonic()
             if delay > 0:
@@ -1343,6 +1396,7 @@ def run_data_only(args, settings, link, native=None):
     finally:
         log("stopping")
         sd_notify("STOPPING=1")
+        updater.stop()
         control.stop()
         link.stop()
         if native is not None:
