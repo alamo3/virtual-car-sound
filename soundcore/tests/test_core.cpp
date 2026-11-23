@@ -11,6 +11,7 @@
 
 #include "../tools/drive.h"
 #include "engine.h"
+#include "speedtracker.h"
 
 using namespace sc;
 
@@ -146,6 +147,24 @@ static void tiresSquealOnlyHardAndFast() {
     CHECK(r > -16 && r < -8, "tire squeal level %.1f dB", r);
 }
 
+// the speed tracker: whole-km/h readings 30 a second in, a smooth speed out (as SpeedTrackerTest.kt)
+static void speedTrackerIsSmooth() {
+    auto truth = [](float t) { if (t < 1) return 0.f; float v = 3.6f * 3.f * 6.f * (1.f - std::exp(-(t - 1.f) / 6.f));
+                               if (t > 10) v -= 3.6f * 1.5f * (t - 10.f); return std::max(0.f, v); };
+    SpeedTracker tr;
+    float blk = 256.f / 48000, t = 0, next = 0, prev = 0, prevTrue = 0, worst = 0, err = 0, last = -1; int n = 0;
+    while (t < 28) {
+        if (t >= next) { tr.reading(std::round(truth(t)), t); next += 0.035f; }
+        float s = tr.next(t, blk), tv = truth(t);
+        if (t > 2 && t < 13) { worst = std::max(worst, std::fabs((s - prev) - (tv - prevTrue))); err += s - tv; n++; }
+        prev = s; prevTrue = tv; last = s; t += blk;
+    }
+    std::printf("speed tracker: worst step %.3f km/h, mean error %+.2f km/h\n", worst, err / n);
+    CHECK(worst < 0.06f, "speed tracker steps %.3f km/h", worst);
+    CHECK(std::fabs(err / n) < 0.4f, "speed tracker error %.2f", err / n);
+    CHECK(last == 0.f, "speed tracker doesn't stop at zero (%.2f)", last);
+}
+
 int main(int argc, char** argv) {
     std::string fx = argc > 1 ? argv[1] : "";
     gearboxGentleNeverHuntsOverAnyRevRange();
@@ -154,6 +173,7 @@ int main(int argc, char** argv) {
     testDriveReaches100AndStops();
     sameSoundAgainKeepsTheGearbox();
     tiresSquealOnlyHardAndFast();
+    speedTrackerIsSmooth();
     everySoundPlaysCleanly(fx);
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

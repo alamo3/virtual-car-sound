@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "engine.h"
+#include "speedtracker.h"
 
 using namespace sc;
 using Clock = std::chrono::steady_clock;
@@ -46,18 +47,19 @@ static bool soundByName(const std::string& n, Sound& out) {
     return false;
 }
 
-// the car's data as Open Blue's PiLink sees it: whole km/h smoothed, lag taken back out
+// the car's data: the speed tracked between its readings (whole km/h, ~30 a second), as Open Blue does
 struct Car {
-    // the car's readings come ~30 a second: through a gap up to HOLD_SEC the last one is held (an
-    // OBD retry shouldn't drop the sound); between readings the speed carries on for up to CARRY_SEC
-    static constexpr float SPEED_SMOOTH_SEC = 0.15f, HOLD_SEC = 1.5f, CARRY_SEC = 0.25f, GAP_SEC = 0.25f;
-    float speedKmh = 0, pedal = 0, accel = 0, smooth = -1;
+    // through a gap up to HOLD_SEC the last reading is held (an OBD retry shouldn't drop the sound)
+    static constexpr float HOLD_SEC = 1.5f, GAP_SEC = 0.25f;
+    SpeedTracker speed;
+    float pedal = 0;
     int motorRpm = 0;
     bool reversing = false, piFresh = false;
-    float lastRaw = -1;
-    Clock::time_point lastAt{}, lastFresh{};
+    Clock::time_point lastFresh{};
     int gaps = 0;
     float longestGap = 0;
+
+    static double secs(Clock::time_point t) { return std::chrono::duration<double>(t.time_since_epoch()).count(); }
 
     void packet(const uint8_t* b) {
         auto now = Clock::now();
@@ -66,33 +68,14 @@ struct Car {
         pedal = std::min(1.f, b[4] / 200.f);
         motorRpm = (int16_t)(b[5] | b[6] << 8);
         piFresh = flags & 1;
-        if (piFresh) {
-            float gap = std::chrono::duration<float>(now - lastFresh).count();
-            if (lastFresh != Clock::time_point{} && gap > GAP_SEC && gap < 60.f) { gaps++; longestGap = std::max(longestGap, gap); }
-            lastFresh = now;
-        }
         reversing = flags & 2;
-        if (lastRaw >= 0) {
-            float dt = std::chrono::duration<float>(now - lastAt).count();
-            if (dt > 0) {
-                float a = (raw - lastRaw) / 3.6f / dt;
-                accel += (a - accel) * std::min(1.f, dt / 0.3f);
-                smooth += (raw - smooth) * std::min(1.f, dt / SPEED_SMOOTH_SEC);
-            }
-        } else {
-            smooth = raw;
-        }
-        lastRaw = raw;
-        lastAt = now;
-        speedKmh = raw < 0.5f ? 0.f : std::max(0.f, smooth + accel * 3.6f * SPEED_SMOOTH_SEC);
+        if (!piFresh) return;
+        float gap = std::chrono::duration<float>(now - lastFresh).count();
+        if (lastFresh != Clock::time_point{} && gap > GAP_SEC && gap < 60.f) { gaps++; longestGap = std::max(longestGap, gap); }
+        lastFresh = now;
+        speed.reading(raw, secs(now));
     }
     bool fresh() const { return lastFresh != Clock::time_point{} && std::chrono::duration<float>(Clock::now() - lastFresh).count() < HOLD_SEC; }
-    // the speed now: the latest reading carried on at the current acceleration
-    float speedNow() const {
-        if (speedKmh <= 0.f) return 0.f;
-        float age = std::min(CARRY_SEC, std::chrono::duration<float>(Clock::now() - lastAt).count());
-        return std::max(0.f, speedKmh + accel * 3.6f * age);
-    }
 };
 
 static int openSocket(const std::string& path) {
@@ -201,12 +184,13 @@ int main(int argc, char** argv) {
             float p = car.reversing ? 0.f : car.pedal;
             pedalGlide = pedalGlide < 0.f ? p : pedalGlide + (p - pedalGlide) * glideK;
             in.pedal = pedalGlide;
-            in.speedMs = car.speedNow() / 3.6f;
-            in.accel = car.reversing ? 0.f : car.accel;
+            in.speedMs = car.speed.next(Car::secs(Clock::now()), (float)frames / rate) / 3.6f;
+            in.accel = car.reversing ? 0.f : car.speed.accel();
             in.motorRpm = car.motorRpm;
             in.reversing = car.reversing;
         } else {
             pedalGlide = -1.f;
+            car.speed.reset();
         }
         in.revThrottle = rev;
         engine.setActive(fresh || engine.testDriving() || rev >= 0.f);
