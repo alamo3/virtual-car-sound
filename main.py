@@ -158,7 +158,8 @@ def device_output_volume_alsa(card, log=print):
                                  if line.strip().startswith("Capabilities:")), [])
             if result.returncode or "pvolume" not in capabilities:
                 continue
-            command = ["amixer", "-c", str(card), "sset", control, "90%"]
+            # Use alsamixer's perceptual mapping so its display also reads 90%.
+            command = ["amixer", "-M", "-c", str(card), "sset", control, "90%"]
             if "pswitch" in capabilities:
                 command.append("unmute")
             result = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -169,7 +170,10 @@ def device_output_volume_alsa(card, log=print):
             log(f"audio: could not set {control} on ALSA card {card}: "
                 f"{result.stderr.strip() or 'amixer failed'}")
             return False
-        log(f"audio: set ALSA card {card} {control} playback volume to 90%")
+        levels = [line.strip() for line in result.stdout.splitlines()
+                  if "Playback" in line and "[" in line]
+        log(f"audio: requested 90% mapped volume on ALSA card {card} {control}"
+            + (f"; {'; '.join(levels)}" if levels else ""))
         return True
 
     log(f"audio: no supported playback volume control found on ALSA card {card}")
@@ -181,10 +185,12 @@ def set_usb_output_volume(device, log=print):
     import re
 
     if not device or device.lower() == "default":
+        log("audio: cannot identify an ALSA card for the default output; volume unchanged")
         return
     try:
         lines = Path("/proc/asound/cards").read_text().splitlines()
-    except OSError:
+    except OSError as exc:
+        log(f"audio: cannot read ALSA cards; volume unchanged: {exc}")
         return
 
     cards = []
@@ -205,8 +211,9 @@ def set_usb_output_volume(device, log=print):
 
     if len(matches) == 1:
         device_output_volume_alsa(matches[0][1], log=log)
-    elif "usb" in device.lower():
-        log(f"audio: could not uniquely match output {device!r} to a USB ALSA card")
+    else:
+        log(f"audio: could not uniquely match output {device!r} to a USB ALSA card; "
+            "volume unchanged")
 
 
 def _modulation_envelope(mono, sr, window_sec=0.012):
