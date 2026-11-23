@@ -7,6 +7,7 @@
 # - local edits or local commits not on GitHub: skip (never overwrites your changes)
 # - otherwise: fast-forward to origin's branch; if requirements.txt changed, install the
 #   new Python packages into .venv
+# - either way, where the native player is built, bring it up to date (incremental)
 # Changes to install_service.sh itself (the service definition) still need
 #   sudo ./install_service.sh   to take effect.
 set -uo pipefail
@@ -14,6 +15,23 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR" || exit 0
 log() { echo "update: $*"; }
+
+# The native player (only where it's been built: install_service.sh --native-sound): brought up
+# to date on every run, whatever happened above -- an incremental build, a no-op when nothing
+# changed, so a build that failed or was cut short (power off mid-build) is finished next time.
+rebuild_player() {
+    [ -d "$DIR/soundcore/build" ] || return 0
+    local out
+    if out=$(timeout 900 cmake --build "$DIR/soundcore/build" -j2 2>&1); then
+        if echo "$out" | grep -q "Linking CXX executable sc_player"; then
+            log "rebuilt the native player (it plays from the next start)"
+        fi
+    else
+        log "rebuilding the native player failed (keeping the old one; tries again next time):"
+        echo "$out" | grep -iE "error|fatal" | head -5 | sed 's/^/update:   /'
+    fi
+}
+trap rebuild_player EXIT
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     log "not a git checkout, skipping"; exit 0
@@ -40,16 +58,11 @@ new=$(git rev-parse "origin/$branch")
 if [ "$old" = "$new" ]; then
     log "up to date ($(git log -1 --format='%h %s'))"; exit 0
 fi
-if ! git merge --ff-only --quiet "origin/$branch" 2>/dev/null; then
-    log "local commits not on GitHub, not updating"; exit 0
+# only ever a fast-forward: local commits not on GitHub (HEAD not behind origin) are left alone
+if ! git merge-base --is-ancestor HEAD "origin/$branch" || ! git merge --ff-only --quiet "origin/$branch" 2>/dev/null; then
+    log "local commits not on GitHub, not updating (push them to resume)"; exit 0
 fi
 log "updated $(git rev-parse --short "$old") -> $(git log -1 --format='%h %s')"
-
-# the native player: rebuild it when its code changed (only where it's been built)
-if [ -d "$DIR/soundcore/build" ] && ! git diff --quiet "$old" "$new" -- soundcore; then
-    log "soundcore changed: rebuilding the native player"
-    timeout 900 cmake --build "$DIR/soundcore/build" -j2 >/dev/null 2>&1 || log "  (rebuild failed: keeping the old player)"
-fi
 
 if ! git diff --quiet "$old" "$new" -- requirements.txt; then
     log "requirements.txt changed: installing Python packages"
