@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import struct
 import threading
 
@@ -55,6 +56,10 @@ COMMAND = "7a6b0002-3c1e-4b7a-9d55-2f1c0e5b8a01"
 STATUS = "7a6b0003-3c1e-4b7a-9d55-2f1c0e5b8a01"
 LIST = "7a6b0004-3c1e-4b7a-9d55-2f1c0e5b8a01"
 TELEMETRY = "7a6b0005-3c1e-4b7a-9d55-2f1c0e5b8a01"
+LOG = "7a6b0006-3c1e-4b7a-9d55-2f1c0e5b8a01"        # notify: the engine's log, a line at a time
+# with the separate Bluetooth service (ble_service.py): the engine and it talk over these
+BLE_SOCKET = "/tmp/vcs-ble.sock"      # to the Bluetooth service: b"T"+packet, b"S"+status, b"V"+voices
+MAIN_SOCKET = "/tmp/vcs-main.sock"    # to the engine: the phone's commands, as text
 TELEMETRY_HZ = 25
 TELEMETRY_POLL_SEC = 0.004   # how often to look for a new reading to send
 NAME = "VirtualCarSound"
@@ -122,23 +127,17 @@ class ControlServer:
             SERVICE, LIST, C.read | C.notify, bytearray(b"#end"), P.readable)
         await self.server.add_new_characteristic(
             SERVICE, TELEMETRY, C.read | C.notify, bytearray(self._telemetry()), P.readable)
+        await self.server.add_new_characteristic(
+            SERVICE, LOG, C.read | C.notify, bytearray(b""), P.readable)
         await self.server.start()
         self.log(f"bluetooth control: advertising as {NAME!r}")
         quiet, n = 0, 0
         loop_time = self.loop.time
-        last_sent = last_status = loop_time()
-        seen = None
+        last_status = loop_time()
         while not self._stop.is_set():
-            # a new reading goes out straight away (checked every 4 ms); without one,
-            # a packet at least TELEMETRY_HZ times a second so the app knows we're here
             await asyncio.sleep(TELEMETRY_POLL_SEC)
             now = loop_time()
-            r = getattr(self.engine, "reader", None)
-            stamp = getattr(r, "updated_at", None) if r is not None else None
-            if stamp != seen or now - last_sent >= 1.0 / TELEMETRY_HZ:
-                seen = stamp
-                last_sent = now
-                self._notify(TELEMETRY, self._telemetry())
+            self._pump(now)
             if now - last_status < 1.0:  # the rest runs once a second
                 continue
             last_status = now
@@ -153,6 +152,19 @@ class ControlServer:
                     raise RuntimeError("advertisement lost")
         await self.server.stop()
 
+    _seen_stamp = None
+    _last_sent = 0.0
+
+    def _pump(self, now: float):
+        """Every TELEMETRY_POLL_SEC: a new reading goes out straight away; without one, a
+        packet at least TELEMETRY_HZ times a second so the app knows we're here."""
+        r = getattr(self.engine, "reader", None)
+        stamp = getattr(r, "updated_at", None) if r is not None else None
+        if stamp != self._seen_stamp or now - self._last_sent >= 1.0 / TELEMETRY_HZ:
+            self._seen_stamp = stamp
+            self._last_sent = now
+            self._notify(TELEMETRY, self._telemetry())
+
     # --- GATT callbacks (called on the loop's thread) -------------------------------
     def _on_read(self, characteristic, **_):
         if str(characteristic.uuid).lower() == STATUS:
@@ -164,6 +176,21 @@ class ControlServer:
             return
         try:
             text = bytes(value).decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return
+        self._command(text)
+
+    def _command(self, text: str):
+        """A command from the phone: applied here, in the engine's process."""
+        self.apply(text)
+        if text == "voices":
+            self.loop.create_task(self._send_list())
+        else:
+            self._notify(STATUS, self._status())
+
+    def apply(self, text: str):
+        """Applies a command to the engine's settings, noting any problem for the app."""
+        try:
             reply = self.handle(text)
         except Exception as e:
             reply = f"error: {e}"
@@ -171,10 +198,6 @@ class ControlServer:
             self.log(f"phone: {text!r} -> {reply}")
             if reply != "ok":
                 self.engine.message = reply      # shown in the app
-        if text == "voices":
-            self.loop.create_task(self._send_list())
-        else:
-            self._notify(STATUS, self._status())
 
     async def _send_list(self):
         for name in self.voices:
@@ -281,3 +304,81 @@ class ControlServer:
                 nat.update({k: p[k] for k in ("g", "rpm", "kmh", "lim", "td", "ur", "cpu", "live", "cs") if k in p})
             st["nat"] = nat
         return json.dumps(st, separators=(",", ":")).encode("utf-8")
+
+
+class ControlBridge(ControlServer):
+    """The engine's side when Bluetooth runs as its own service (ble_service.py,
+    virtual-car-sound-ble): the same commands, telemetry and status, over local sockets
+    instead of a GATT server here. So the phone stays connected while the engine restarts,
+    updates or is stuck -- and can read its log."""
+
+    VOICES_EVERY_SEC = 5.0               # so a restarted Bluetooth service soon has the list
+
+    def start(self):
+        import socket as _socket
+        self._in = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+        try:
+            os.unlink(MAIN_SOCKET)
+        except FileNotFoundError:
+            pass
+        self._in.bind(MAIN_SOCKET)
+        self._in.setblocking(False)
+        self._out = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+        threading.Thread(target=self._bridge, name="ble-bridge", daemon=True).start()
+        self.log("bluetooth: through the separate Bluetooth service")
+
+    def stop(self):
+        self._stop.set()
+
+    def _send(self, kind: bytes, data: bytes):
+        try:
+            self._out.sendto(kind + data, BLE_SOCKET)
+        except OSError:
+            pass                          # the Bluetooth service isn't up (yet): the next one gets through
+
+    def _notify(self, uuid, data: bytes):
+        if uuid == TELEMETRY:
+            self._send(b"T", data)
+        elif uuid == STATUS:
+            self._send(b"S", data)
+
+    def _bridge(self):
+        import time as _time
+        last_status = last_voices = 0.0
+        while not self._stop.is_set():
+            _time.sleep(TELEMETRY_POLL_SEC)
+            now = _time.monotonic()
+            while True:                   # the phone's commands, relayed by the Bluetooth service
+                try:
+                    msg = self._in.recv(1024)
+                except (BlockingIOError, OSError):
+                    break
+                text = msg.decode("utf-8", "replace").strip()
+                if not text:
+                    continue
+                if text != "voices":
+                    self.apply(text)
+                self._send(b"V", json.dumps(self.voices).encode("utf-8"))
+                self._send(b"S", self._status())
+            self._pump(now)
+            if now - last_status >= 1.0:
+                last_status = now
+                self._send(b"S", self._status())
+            if now - last_voices >= self.VOICES_EVERY_SEC:
+                last_voices = now
+                self._send(b"V", json.dumps(self.voices).encode("utf-8"))
+        try:
+            os.unlink(MAIN_SOCKET)
+        except OSError:
+            pass
+
+
+BLE_UNIT_FILE = "/etc/systemd/system/virtual-car-sound-ble.service"
+
+
+def make_control(engine, voice_names, save, log=print):
+    """The engine's Bluetooth: through the separate Bluetooth service when it's installed
+    (install_service.sh), else a GATT server in this process, as before."""
+    if os.path.exists(BLE_UNIT_FILE):
+        return ControlBridge(engine, voice_names, save, log=log)
+    return ControlServer(engine, voice_names, save, log=log)

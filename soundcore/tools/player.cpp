@@ -8,7 +8,8 @@
 //   - the car's data: the same 10-byte packet the Pi sends the phone over Bluetooth
 //     (ble_control.py: version 1, flags, speed x100, pedal x200, motor rpm, current x10, seq)
 //   - commands, as text: "sound <name>", "volume <0..1>", "gearshifts <0|1>", "cruisesettle <0|1>",
-//     "testdrive start|stop", "rev <0..1>" (revving in place; "rev off" to stop)
+//     "testdrive start|stop", "rev <0..1>" (revving in place; "rev off" to stop),
+//     "cue update|build|ready|problem" (a short tone for what the Pi is doing)
 // The speed arrives in whole km/h: it's smoothed, and the lag that adds taken back out with the
 // acceleration, as Open Blue does (PiLink); between readings it carries on, and the pedal glides.
 // A short gap in the data holds the last reading; with none for 1.5 s (car off, adapter gone) it
@@ -76,6 +77,39 @@ struct Car {
         speed.reading(raw, secs(now));
     }
     bool fresh() const { return lastFresh != Clock::time_point{} && std::chrono::duration<float>(Clock::now() - lastFresh).count() < HOLD_SEC; }
+};
+
+// Short tones for what the Pi is doing (an update came down, the player is being rebuilt, it's
+// ready, something went wrong), mixed over everything so they're heard with the engine quiet.
+struct Cues {
+    struct Note { float hz, sec; };
+    std::vector<Note> notes;
+    size_t note = 0;
+    float t = 0;
+    double phase = 0;
+    int sr = 48000;
+    static constexpr float LEVEL = 0.12f;      // about -18 dBFS: clear, not startling
+
+    bool start(const std::string& name) {
+        if (name == "update") notes = {{660, 0.12f}, {880, 0.18f}};                  // rising pair: news
+        else if (name == "build") notes = {{440, 0.25f}};                            // one low tone: working on it
+        else if (name == "ready") notes = {{523, 0.12f}, {659, 0.12f}, {784, 0.25f}}; // rising triad: done
+        else if (name == "problem") notes = {{494, 0.18f}, {370, 0.3f}};             // falling pair: something failed
+        else return false;
+        note = 0; t = 0; phase = 0;
+        return true;
+    }
+    void mix(float* l, float* r, int frames) {
+        for (int i = 0; i < frames && note < notes.size(); ++i) {
+            const Note& n = notes[note];
+            float env = std::min(1.f, std::min(t / 0.01f, (n.sec - t) / 0.04f));   // 10 ms in, 40 ms out
+            phase += n.hz / sr;
+            float v = (float)(std::sin(2 * M_PI * phase) + 0.25 * std::sin(4 * M_PI * phase)) * LEVEL * std::max(0.f, env);
+            l[i] += v; r[i] += v;
+            t += 1.f / sr;
+            if (t >= n.sec + 0.05f) { note++; t = 0; }                               // a short gap between notes
+        }
+    }
 };
 
 static int openSocket(const std::string& path) {
@@ -149,6 +183,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "sound: %s, effects from %s\n", info(engine.sound()).name, fx.c_str());
 
     Car car;
+    Cues cues;
+    cues.sr = (int)rate;
     float rev = -1.f, pedalGlide = -1.f;
     const float glideK = 1.f - std::exp(-(float)period / rate / 0.03f);   // the pedal glides between readings (~30 ms)
     const int frames = (int)period;
@@ -173,6 +209,7 @@ int main(int argc, char** argv) {
             else if (cmd == "volume") engine.setVolume(std::clamp(std::stof(arg), 0.f, 1.f));
             else if (cmd == "gearshifts") engine.setGearshifts(arg == "1" || arg == "on" || arg == "true");
             else if (cmd == "cruisesettle") engine.setCruiseSettle(arg == "1" || arg == "on" || arg == "true");
+            else if (cmd == "cue") { if (!cues.start(arg)) { std::fprintf(stderr, "unknown cue: %s\n", arg.c_str()); continue; } }
             else if (cmd == "testdrive") arg == "start" ? engine.startTestDrive() : engine.stopTestDrive();
             else if (cmd == "rev") rev = arg == "off" ? -1.f : std::clamp(std::stof(arg), 0.f, 1.f);
             else { std::fprintf(stderr, "unknown command: %s\n", text.c_str()); continue; }
@@ -198,6 +235,7 @@ int main(int argc, char** argv) {
 
         auto t0 = Clock::now();
         engine.render(in, l.data(), r.data(), frames);
+        cues.mix(l.data(), r.data(), frames);
         for (int i = 0; i < frames; ++i) {
             pcmBuf[2 * i] = (int16_t)std::lround(std::clamp(l[i], -1.f, 1.f) * 32767);
             pcmBuf[2 * i + 1] = (int16_t)std::lround(std::clamp(r[i], -1.f, 1.f) * 32767);

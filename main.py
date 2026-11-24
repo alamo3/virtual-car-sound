@@ -1183,7 +1183,7 @@ def run_headless(args, settings, link):
     control = None
     if args.bluetooth:                 # phone app control (ble_control.py, android/)
         import ble_control
-        control = ble_control.ControlServer(engine, list(VOICES), save_settings, log=log)
+        control = ble_control.make_control(engine, list(VOICES), save_settings, log=log)
         control.start()
 
     stop = threading.Event()
@@ -1272,13 +1272,16 @@ class BackgroundUpdate:
 
     The service updates once as it starts (update.sh, ExecStartPre) but gives the network only a
     few seconds: at boot Wi-Fi is often not connected yet, and the update is skipped. This
-    tries again every RETRY_SEC for a while once running; an update that comes down applies at
-    the next start -- straight away if the car isn't sending data (parked), never mid-drive.
+    tries again every RETRY_SEC for a while once running, and rebuilds the native player here
+    (update.sh --build: minutes on a Pi, at the lowest priority) rather than holding up the start.
+    An update or a rebuilt player applies at the next start -- straight away if the car isn't
+    sending data (parked), never mid-drive.
     """
     RETRY_SEC, TRIES = 60.0, 30
 
-    def __init__(self, log):
+    def __init__(self, log, cue=None):
         self.log = log
+        self.cue = cue or (lambda name: None)   # a short tone on the Pi's speakers (native sound)
         self.pending = False             # updated: a restart applies it
         self._stop = threading.Event()
 
@@ -1294,18 +1297,34 @@ class BackgroundUpdate:
         for _ in range(self.TRIES):
             if self._stop.wait(self.RETRY_SEC):
                 return
+            # --build: the native player is rebuilt here, in the background, not at boot.
+            # Its output line by line, as it happens, so each step can be heard (cues).
+            out = ""
             try:
-                out = subprocess.run([str(script)], capture_output=True, text=True, timeout=1500).stdout
+                proc = subprocess.Popen([str(script), "--build"], stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True)
+                for line in proc.stdout:
+                    out += line
+                    line = line.rstrip()
+                    if "offline" not in line:    # tried every minute while offline: not worth a line each
+                        self.log(line)
+                    if "update: updated" in line:
+                        self.cue("update")
+                    elif "building the native player (" in line:
+                        self.cue("build")
+                    elif "rebuilt the native player" in line:
+                        self.cue("ready")
+                    elif "failed" in line and "keeping the old one" in line:
+                        self.cue("problem")
+                proc.wait(timeout=4000)
             except (OSError, subprocess.TimeoutExpired) as e:
                 self.log(f"update: couldn't run update.sh ({e})")
                 return
-            if "offline" in out:
-                continue                 # no network yet: try again later
-            for line in out.strip().splitlines():
-                self.log(line)
-            if "update: updated" in out:
+            if "update: updated" in out or "rebuilt the native player" in out:
                 self.pending = True
                 self.log("update: applies at the next start (now, if the car is off)")
+            if "offline" in out:
+                continue                 # no network yet: try again later
             return
 
 
@@ -1332,7 +1351,7 @@ def run_data_only(args, settings, link, native=None):
         if settings.native_sound not in native_sound.SOUNDS:
             settings.native_sound = native_sound.DEFAULT_SOUND
         native.start()
-    control = ble_control.ControlServer(engine, voices, save_settings, log=log)
+    control = ble_control.make_control(engine, voices, save_settings, log=log)
     control.start()
 
     stop = threading.Event()
@@ -1346,7 +1365,7 @@ def run_data_only(args, settings, link, native=None):
     if native is not None:
         period = 0.004               # look for new readings often: the player plays them at once
     restart_reason = None
-    updater = BackgroundUpdate(log)
+    updater = BackgroundUpdate(log, cue=(lambda name: native.command(f"cue {name}")) if native is not None else None)
     updater.start()
     quiet_since = time.monotonic()      # since when the car has sent no data (for applying an update)
     sd_notify("READY=1")

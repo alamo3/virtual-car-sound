@@ -33,6 +33,10 @@ set -euo pipefail
 NAME=virtual-car-sound
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT=/etc/systemd/system/$NAME.service
+# the Bluetooth link to the phone, as its own service (ble_service.py): it stays up while the
+# engine restarts or updates, relays the engine's data and streams its log to the app
+BLE_NAME=$NAME-ble
+BLE_UNIT=/etc/systemd/system/$BLE_NAME.service
 HW_WATCHDOG=/etc/systemd/system.conf.d/90-$NAME-watchdog.conf
 DEFAULTS=/etc/default/$NAME
 RUN_USER="${SUDO_USER:-$(id -un)}"
@@ -182,7 +186,31 @@ EOF
         echo "-- hardware watchdog on (reboots the Pi if it ever freezes)"
     fi
 
+    cat > "$BLE_UNIT" <<EOF
+[Unit]
+Description=Virtual car sound: Bluetooth link to the phone (and the engine's log)
+After=bluetooth.target
+Wants=bluetooth.target
+StartLimitIntervalSec=0
+
+[Service]
+User=$RUN_USER
+# systemd-journal: to read the engine's log for the app
+SupplementaryGroups=bluetooth systemd-journal adm
+WorkingDirectory=$DIR
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$DIR/.venv/bin/python $DIR/ble_service.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    echo "-- wrote $BLE_UNIT"
+
     systemctl daemon-reload
+    systemctl enable "$BLE_NAME" >/dev/null
+    systemctl restart "$BLE_NAME"
     systemctl enable "$NAME" >/dev/null
     systemctl restart "$NAME"
     sleep 2
@@ -197,10 +225,11 @@ EOF
 uninstall() {
     need_root uninstall
     systemctl disable --now "$NAME" 2>/dev/null || true
-    rm -f "$UNIT"
+    systemctl disable --now "$BLE_NAME" 2>/dev/null || true
+    rm -f "$UNIT" "$BLE_UNIT"
     if [ -f "$HW_WATCHDOG" ]; then rm -f "$HW_WATCHDOG"; systemctl daemon-reexec; fi
     systemctl daemon-reload
-    echo "Removed the $NAME service (kept $DEFAULTS and the project files)."
+    echo "Removed the $NAME and $BLE_NAME services (kept $DEFAULTS and the project files)."
 }
 
 CMD=install
