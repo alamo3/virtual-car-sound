@@ -22,7 +22,8 @@ scans for the service, connects and talks over three characteristics:
               "msg": last problem, e.g. a voice that failed to load ("" when all is well),
               with --native-sound also "nat": {"gears": gearbox on, "g": gear, "rpm", "kmh",
               "lim": limiter, "td": test drive stage or "", "ur": underruns, "cpu": %,
-              "live": car data} -- "nat" is {"gears"} alone until the player reports; the
+              "live": car data, "cs": settled for a steady cruise} -- "nat" is {"gears"} alone
+              until the player reports; the
               sounds are on LIST ("voices"))
   LIST     notify: the voice list, as above
   TELEMETRY  notify, as soon as each new reading arrives from the car (~25-30 a second;
@@ -277,6 +278,6 @@ class ControlServer:
             nat = {"gears": bool(s.native_gears)}
             p = native.status()
             if p:
-                nat.update({k: p[k] for k in ("g", "rpm", "kmh", "lim", "td", "ur", "cpu", "live") if k in p})
+                nat.update({k: p[k] for k in ("g", "rpm", "kmh", "lim", "td", "ur", "cpu", "live", "cs") if k in p})
             st["nat"] = nat
         return json.dumps(st, separators=(",", ":")).encode("utf-8")

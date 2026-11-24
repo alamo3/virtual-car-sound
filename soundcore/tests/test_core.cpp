@@ -165,6 +165,32 @@ static void speedTrackerIsSmooth() {
     CHECK(last == 0.f, "speed tracker doesn't stop at zero (%.2f)", last);
 }
 
+// cruise settle: a steady cruise eases the engine down ~6 dB; a press brings it straight back
+static void cruiseSettles() {
+    auto run = [](bool on, std::vector<float>& level) {
+        Engine e(48000); e.setSound(Sound::FLAT6); e.skipChime(); e.setCruiseSettle(on);
+        std::vector<float> l(256), r(256);
+        float v = 25.f;                                     // 90 km/h
+        for (int b = 0; b < 3300; ++b) {                    // 16 s cruise, then a press at 16 s
+            Inputs in; float t = b * 256.f / 48000;
+            in.pedal = t < 16.f ? 0.25f : 0.6f; in.speedMs = v; in.accel = t < 16.f ? 0.f : 1.5f;
+            e.render(in, l.data(), r.data(), 256);
+            double en = 0; for (int i = 0; i < 256; ++i) en += l[i] * l[i] + r[i] * r[i];
+            level.push_back((float)(10 * std::log10(en / 512 + 1e-12)));
+        }
+        return e.readout().settled;
+    };
+    std::vector<float> on, off;
+    run(true, on); run(false, off);
+    auto avg = [](const std::vector<float>& x, float a, float b) { double s = 0; int n = 0;
+        for (size_t i = (size_t)(a * 187.5f); i < (size_t)(b * 187.5f) && i < x.size(); ++i) { s += x[i]; n++; } return s / n; };
+    double settled = avg(on, 12, 16) - avg(off, 12, 16), early = avg(on, 1, 3) - avg(off, 1, 3), back = avg(on, 16.4f, 16.8f) - avg(off, 16.4f, 16.8f);
+    std::printf("cruise settle: %+.1f dB at a steady cruise, %+.1f dB in the first seconds, %+.1f dB 0.4 s after a press\n", settled, early, back);
+    CHECK(settled < -4.5 && settled > -7.5, "cruise settle %.1f dB", settled);
+    CHECK(std::fabs(early) < 0.5, "settled too early (%.1f dB)", early);
+    CHECK(back > -1.0, "not back after a press (%.1f dB)", back);
+}
+
 int main(int argc, char** argv) {
     std::string fx = argc > 1 ? argv[1] : "";
     gearboxGentleNeverHuntsOverAnyRevRange();
@@ -174,6 +200,7 @@ int main(int argc, char** argv) {
     sameSoundAgainKeepsTheGearbox();
     tiresSquealOnlyHardAndFast();
     speedTrackerIsSmooth();
+    cruiseSettles();
     everySoundPlaysCleanly(fx);
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

@@ -150,6 +150,8 @@ class NativeSound:
             "sound": SOUNDS.get(s.native_sound, SOUNDS[DEFAULT_SOUND]),
             "volume": f"{max(0.0, min(1.0, s.volume)):.2f}",
             "gearshifts": "1" if (self.gearshifts and s.native_gears) else "0",
+            # the saved "cruise quiet" setting: at a steady cruise the engine settles down
+            "cruisesettle": "1" if s.cruise_quiet else "0",
         }
         # on a change -- and every couple of seconds anyway, so a player that has just
         # (re)started and missed the first ones catches up

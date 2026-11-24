@@ -7,7 +7,7 @@
 // On the socket (UNIX datagrams) it takes
 //   - the car's data: the same 10-byte packet the Pi sends the phone over Bluetooth
 //     (ble_control.py: version 1, flags, speed x100, pedal x200, motor rpm, current x10, seq)
-//   - commands, as text: "sound <name>", "volume <0..1>", "gearshifts <0|1>",
+//   - commands, as text: "sound <name>", "volume <0..1>", "gearshifts <0|1>", "cruisesettle <0|1>",
 //     "testdrive start|stop", "rev <0..1>" (revving in place; "rev off" to stop)
 // The speed arrives in whole km/h: it's smoothed, and the lag that adds taken back out with the
 // acceleration, as Open Blue does (PiLink); between readings it carries on, and the pedal glides.
@@ -172,6 +172,7 @@ int main(int argc, char** argv) {
             if (cmd == "sound" && soundByName(arg, snd)) engine.setSound(snd);
             else if (cmd == "volume") engine.setVolume(std::clamp(std::stof(arg), 0.f, 1.f));
             else if (cmd == "gearshifts") engine.setGearshifts(arg == "1" || arg == "on" || arg == "true");
+            else if (cmd == "cruisesettle") engine.setCruiseSettle(arg == "1" || arg == "on" || arg == "true");
             else if (cmd == "testdrive") arg == "start" ? engine.startTestDrive() : engine.stopTestDrive();
             else if (cmd == "rev") rev = arg == "off" ? -1.f : std::clamp(std::stof(arg), 0.f, 1.f);
             else { std::fprintf(stderr, "unknown command: %s\n", text.c_str()); continue; }
@@ -220,9 +221,9 @@ int main(int argc, char** argv) {
         if (std::chrono::duration<float>(Clock::now() - lastState).count() >= 0.25f) {
             lastState = Clock::now();
             const Readout& ro = engine.readout();
-            std::printf("{\"snd\":\"%s\",\"g\":%d,\"rpm\":%.0f,\"kmh\":%.1f,\"lim\":%d,\"td\":\"%s\",\"ur\":%d,\"cpu\":%.1f,\"live\":%d}\n",
+            std::printf("{\"snd\":\"%s\",\"g\":%d,\"rpm\":%.0f,\"kmh\":%.1f,\"lim\":%d,\"td\":\"%s\",\"ur\":%d,\"cpu\":%.1f,\"live\":%d,\"cs\":%d}\n",
                         info(engine.sound()).name, ro.gear, ro.rpm, ro.kmh, ro.limiter ? 1 : 0, ro.testDrive ? ro.testDrive : "",
-                        underruns, 100.0 * cpuWin / std::max(audioWin, 1e-9), car.fresh() ? 1 : 0);
+                        underruns, 100.0 * cpuWin / std::max(audioWin, 1e-9), car.fresh() ? 1 : 0, ro.settled ? 1 : 0);
             std::fflush(stdout);
             cpuWin = audioWin = 0;
         }
