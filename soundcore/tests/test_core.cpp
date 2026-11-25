@@ -186,9 +186,33 @@ static void cruiseSettles() {
         for (size_t i = (size_t)(a * 187.5f); i < (size_t)(b * 187.5f) && i < x.size(); ++i) { s += x[i]; n++; } return s / n; };
     double settled = avg(on, 12, 16) - avg(off, 12, 16), early = avg(on, 1, 3) - avg(off, 1, 3), back = avg(on, 16.4f, 16.8f) - avg(off, 16.4f, 16.8f);
     std::printf("cruise settle: %+.1f dB at a steady cruise, %+.1f dB in the first seconds, %+.1f dB 0.4 s after a press\n", settled, early, back);
-    CHECK(settled < -4.5 && settled > -7.5, "cruise settle %.1f dB", settled);
+    CHECK(settled < -6.5 && settled > -9.5, "cruise settle %.1f dB", settled);
     CHECK(std::fabs(early) < 0.5, "settled too early (%.1f dB)", early);
     CHECK(back > -1.0, "not back after a press (%.1f dB)", back);
+}
+
+// idle settle: stopped off the pedal, the engine eases ~9 dB down; touching the pedal brings it back
+static void idleSettles() {
+    auto run = [](bool on, std::vector<float>& level) {
+        Engine e(48000); e.setSound(Sound::HYPERCAR); e.skipChime(); e.setCruiseSettle(on);
+        std::vector<float> l(256), r(256);
+        for (int b = 0; b < 2500; ++b) {                    // 12 s stopped, then the pedal at 12 s
+            Inputs in; float t = b * 256.f / 48000;
+            in.pedal = t < 12.f ? 0.f : 0.3f; in.speedMs = 0.f;
+            e.render(in, l.data(), r.data(), 256);
+            double en = 0; for (int i = 0; i < 256; ++i) en += l[i] * l[i] + r[i] * r[i];
+            level.push_back((float)(10 * std::log10(en / 512 + 1e-12)));
+        }
+    };
+    std::vector<float> on, off;
+    run(true, on); run(false, off);
+    auto avg = [](const std::vector<float>& x, float a, float b) { double s = 0; int n = 0;
+        for (size_t i = (size_t)(a * 187.5f); i < (size_t)(b * 187.5f) && i < x.size(); ++i) { s += x[i]; n++; } return s / n; };
+    double settled = avg(on, 9, 12) - avg(off, 9, 12), early = avg(on, 0.5f, 2.5f) - avg(off, 0.5f, 2.5f), back = avg(on, 12.3f, 12.6f) - avg(off, 12.3f, 12.6f);
+    std::printf("idle settle: %+.1f dB stopped, %+.1f dB in the first seconds, %+.1f dB 0.3 s after the pedal\n", settled, early, back);
+    CHECK(settled < -7.5 && settled > -10.5, "idle settle %.1f dB", settled);
+    CHECK(std::fabs(early) < 0.5, "idle settled too early (%.1f dB)", early);
+    CHECK(back > -1.0, "not back after the pedal (%.1f dB)", back);
 }
 
 int main(int argc, char** argv) {
@@ -201,6 +225,7 @@ int main(int argc, char** argv) {
     tiresSquealOnlyHardAndFast();
     speedTrackerIsSmooth();
     cruiseSettles();
+    idleSettles();
     everySoundPlaysCleanly(fx);
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;
