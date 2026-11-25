@@ -1,7 +1,9 @@
-// Flat-6: a layered boxer six (port of Open Blue's Flat6Voice.kt). Each firing strikes its
-// bank's formant resonators (the right bank tuned and weighted apart: the boxer's rasp), through
-// pipes and a muffler that opens with load; intake howl, mechanical detail, overrun crackle;
-// the gearbox's torque handover and limiter cuts drop the firing out.
+// Flat-6: a layered boxer six. Each firing is a smooth pressure pulse (a half-sine about half the
+// firing interval wide, as Open Blue's piston engines: no sharp clicks, so no saw-wave buzz) into
+// its bank's exhaust -- a low-pass body that opens with load, an exhaust and a pipe resonance,
+// turbulence riding on each pulse -- the right bank weaker and tuned apart (the boxer's lumpy
+// half-order note). Then a muffler that opens with load; intake howl, valvetrain tick, overrun
+// crackle; the gearbox's torque handover and limiter cuts drop the firing out.
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -14,16 +16,14 @@ namespace sc {
 namespace {
 constexpr int FIRING_ORDER[6] = {0, 5, 1, 3, 2, 4};
 constexpr float CYL_GAIN[6] = {1.00f, 0.93f, 1.05f, 0.97f, 1.02f, 0.95f};
-constexpr float F_HZ[4] = {170.f, 480.f, 1250.f, 3100.f};
-constexpr float F_DECAY[4] = {0.0045f, 0.0018f, 0.0009f, 0.00035f};
-constexpr float F_LO[4] = {1.00f, 0.45f, 0.10f, 0.02f};
-constexpr float F_HI[4] = {1.00f, 0.85f, 0.50f, 0.14f};
-// What keeps it from sounding like a saw wave (a perfectly regular train of sharp pulses):
-//  - FIRE_JITTER: each firing lands a little early or late (cycle-to-cycle combustion variation,
-//    ~0.7 degrees of crank): the upper harmonics turn to texture while the low ones stay tonal
-//  - ATTACK_SEC: each pulse rises over this long, not in a single sample
-//  - MUFFLE_LO / MUFFLE_HI: the exhaust's top end, closed to open with load and revs
-constexpr float FIRE_JITTER = 0.006f, ATTACK_SEC = 0.0006f, MUFFLE_LO = 2000.f, MUFFLE_HI = 5000.f;
+// the exhaust (per bank): body low-pass, exhaust and pipe resonances, mixed as the piston engines
+constexpr float EXHAUST_HZ = 105.f, PIPE_HZ = 330.f, BODY_GAIN = 1.1f, EXHAUST_GAIN = 6.f, PIPE_GAIN = 2.2f;
+// each pulse: a half-sine this wide (PULSE_WIDTH of the firing interval, within PULSE_MIN..MAX s),
+// varying in strength by ROUGHNESS, landing early or late by FIRE_JITTER (of an interval)
+constexpr float PULSE_WIDTH = 0.5f, PULSE_MIN = 0.0012f, PULSE_MAX = 0.006f, ROUGHNESS = 0.22f;
+constexpr float FIRE_JITTER = 0.006f, MUFFLE_LO = 2000.f, MUFFLE_HI = 5000.f;
+constexpr float BANK_LEVEL = 0.115f;      // the banks into the rest at the level the old exhaust had
+constexpr float SAT_IN = 0.35f;          // how hot the exhaust runs into its saturation
 constexpr float RIGHT_TUNE = 1.10f, WEAK_LOW = 0.66f, WEAK_HIGH = 0.86f;
 constexpr float TRIM = 5.7f, POP_SEC = 0.03f;
 constexpr float RASP = 0.06f;            // the turbulent rasp on each pulse, at full load
@@ -34,8 +34,8 @@ public:
     static constexpr float IDLE = 900.f, REDLINE = 8500.f;
 
     explicit Flat6Voice(int sr)
-        : LayeredVoice(sr), noise_(11), pink_(12), attackK_(1.f - std::exp(-1.f / (ATTACK_SEC * sr))),
-          level_(0.02f, sr), intakeLevel_(0.05f, sr) {
+        : LayeredVoice(sr), noise_(11), pink_(12), level_(0.02f, sr), intakeLevel_(0.05f, sr) {
+        turbDecay_ = std::exp(-1.f / (0.0030f * sr));
         for (int c = 0; c < 2; ++c) { shelf_[c].lowShelf(140.f, 0.7f, 1.f, sr); hp_[c].highPass(28.f, 0.707f, sr); }
         int n = (int)(POP_SEC * sr);
         for (int k = 0; k < 6; ++k) {
@@ -62,9 +62,15 @@ public:
         float weak = lerp(WEAK_LOW, WEAK_HIGH, rpmN);
         float fireAmp = 1.f - 0.85f * clamp01(s.shifting) * (load > 0.3f ? 1.f : 0.f);
         if (s.cut) fireAmp = 0.12f;
-        float formantGain[4];
-        for (int f = 0; f < 4; ++f) formantGain[f] = F_LO[f] + (F_HI[f] - F_LO[f]) * bright;
-        for (int b = 0; b < 2; ++b) for (int f = 0; f < 4; ++f) res_[b][f].set(F_HZ[f] * (b == 1 ? RIGHT_TUNE : 1.f), F_DECAY[f], sr_);
+        for (int b = 0; b < 2; ++b) {                          // the right bank tuned apart
+            float tune = b == 1 ? RIGHT_TUNE : 1.f;
+            body_[b].lowPass((300.f + 2400.f * load * bright + rpm * 0.25f) * tune, 0.7f, sr_);
+            exh_[b].bandPass(EXHAUST_HZ * tune, 0.9f, sr_);
+            pipe_[b].bandPass(PIPE_HZ * tune, 2.2f, sr_);
+        }
+        const float pulseW = clampf(PULSE_WIDTH / fireHz, PULSE_MIN, PULSE_MAX);
+        const float drive = 1.2f + 1.8f * load;                // pushed harder, a little harsher
+        const float driveNorm = 1.f / std::tanh(drive);
         grit_.bandPass(2200.f, 0.8f, sr_);
         float mute = lerp(MUFFLE_LO, MUFFLE_HI, load * (0.35f + 0.65f * rpmN)) * (1.f - 0.45f * overrun);
         for (int c = 0; c < 2; ++c) {
@@ -86,9 +92,8 @@ public:
 
         float vol = volume * TRIM;
         for (int i = 0; i < frames; ++i) {
-            // firing: strike the bank's resonators
+            // firing: start a pressure pulse in that cylinder's bank
             firePhase_ += fireHz / sr_;
-            float hitL = 0.f, hitR = 0.f;
             if (firePhase_ >= fireAt_) {
                 firePhase_ -= fireAt_;
                 fireAt_ = 1.0 + FIRE_JITTER * noise_.gauss();       // when the next one lands
@@ -96,16 +101,16 @@ public:
                 sinceFire_ = 0.f;
                 int cyl = FIRING_ORDER[firing_ % 6];
                 bool right = cyl % 2 == 1;
-                float g = CYL_GAIN[cyl] * (right ? weak : 1.f) * (1.f + 0.10f * noise_.gauss()) * fireAmp;
-                (right ? hitR : hitL) = g;
+                int b = right ? 1 : 0;
+                pulseAmp_[b] = CYL_GAIN[cyl] * (right ? weak : 1.f) * (1.f + ROUGHNESS * noise_.white() * (0.6f + load)) * fireAmp *
+                               (0.7f + 0.3f * load);   // (the level below follows load too)
+                pulseT_[b] = 0.f;
+                turb_[b] = pulseAmp_[b] * (0.08f + 0.92f * load);   // turbulence: mostly when it's working
             } else {
                 sinceFire_ += 1.f / sr_;
             }
-            // each firing is a smoothed impulse (~0.25 ms onset, unit area): the pulse's soft attack
-            attack_[0] += (hitL / attackK_ - attack_[0]) * attackK_;
-            attack_[1] += (hitR / attackK_ - attack_[1]) * attackK_;
-            float bankL = exhaust(0, attack_[0] * attackK_, formantGain);
-            float bankR = exhaust(1, attack_[1] * attackK_, formantGain);
+            float bankL = bank(0, pulseW, drive, driveNorm);
+            float bankR = bank(1, pulseW, drive, driveNorm);
             // the rasp: turbulent flow riding on each exhaust pulse, added to it. (It used to
             // multiply the whole exhaust by noise -- heard as a distorted, rattling buzz.)
             float pulseEnv = std::exp(-sinceFire_ / pulseTau);
@@ -144,17 +149,24 @@ public:
     }
 
 private:
-    float exhaust(int bank, float hit, const float* gain) {
-        float y = 0.f;
-        for (int f = 0; f < 4; ++f) y += res_[bank][f].process(hit) * gain[f];
-        return y;
+    // one bank's exhaust: its current pulse (a half-sine) plus turbulence, through the body,
+    // exhaust and pipe, driven a little harder with load
+    float bank(int b, float pulseW, float drive, float driveNorm) {
+        float e = pulseT_[b] < pulseW ? pulseAmp_[b] * sin1(0.5 * pulseT_[b] / pulseW) : 0.f;
+        pulseT_[b] += 1.f / sr_;
+        turb_[b] *= turbDecay_;
+        float x = e + noise_.white() * turb_[b] * 0.35f;
+        float y = body_[b].process(x) * BODY_GAIN + exh_[b].process(x) * EXHAUST_GAIN + pipe_[b].process(x) * PIPE_GAIN;
+        // into the saturation at SAT_IN of its level (gentle at a cruise, biting when pushed), back
+        // up after it: the rest of the voice sees the level it always did
+        return std::tanh(y * SAT_IN * drive) * driveNorm / SAT_IN * BANK_LEVEL;
     }
 
     Noise noise_;
     Pink pink_;
-    Resonator res_[2][4];
-    float attack_[2] = {0, 0};
-    float attackK_;
+    Biq body_[2], exh_[2], pipe_[2];
+    float pulseT_[2] = {1.f, 1.f}, pulseAmp_[2] = {0, 0}, turb_[2] = {0, 0};
+    float turbDecay_ = 0.f;                                        // turbulence dies in ~3 ms
     Biq grit_, tailpipe_[2], header_[2], muffler_[2], intakeBp_, tickBp_, shelf_[2], hp_[2];
     Smooth level_, intakeLevel_;
     double firePhase_ = 0, popPan_ = 0, fireAt_ = 1.0;
